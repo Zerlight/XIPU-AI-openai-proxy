@@ -64,11 +64,11 @@ Keep this folder in place. The extension is already configured to connect to the
 ### 3. Connect XIPU AI
 
 1. Sign in to XIPU AI and refresh the tab.
-2. Create a dedicated conversation named **XIPU AI Bridge**. Choose your model, leave the system prompt empty, and set **Context Count** to **0**.
+2. Create a conversation named **XIPU AI Bridge** exclusively for the bridge. Leave its system prompt empty and set **Context Count** to **0**. Its initial model can be any available model.
 3. Open the extension's **Settings**, click **Load from XIPU AI**, select that conversation, then click **Use session** and **Save changes**.
 4. Copy the **base URL** and **API key** from the extension popup into your client.
 
-Keep the XIPU AI tab signed in. **The model requested by your client must match the selected conversation's model.**
+Keep the XIPU AI tab signed in. **Choose models in your client; the bridge updates the dedicated conversation automatically.**
 
 > [!NOTE]
 > Native packages are not code-signed or notarized; your operating system may block them. Browser integration requires platform-specific verification. See [installation options](docs/reference.md#installation-options) for Edge/Chromium and [troubleshooting](docs/reference.md#uninstall-and-troubleshooting) if setup fails.
@@ -80,13 +80,13 @@ Keep the XIPU AI tab signed in. **The model requested by your client must match 
 | API type | OpenAI-compatible |
 | Base URL | `http://127.0.0.1:8765/v1` by default; copy the current URL from the popup |
 | API key | Copy the local key from the popup |
-| Model | The model selected in your dedicated XIPU AI conversation |
+| Model | Any available model ID from `/v1/models`; overrides the default in Settings |
 
 Both `/v1/chat/completions` and `/v1/responses` are available. The model list comes from `/v1/models`. See the [API reference](docs/reference.md#api) for examples and supported request fields.
 
 ## Know before you use it
 
-The bridge uses your existing school access and usage allowance. It handles one request at a time and does not retry failed school requests automatically. Conversations and uploaded images remain on the school service.
+The bridge uses your existing school access and usage allowance. It handles one request at a time and does not retry failed school requests automatically. Model changes persist, including after a failed or cancelled request. Do not manually edit or send messages in the dedicated conversation while a request is active. Conversations and uploaded images remain on the school service.
 
 **Client token limits do not cap generation or charges.** The bridge accepts `max_tokens`, `max_completion_tokens`, and `max_output_tokens` for compatibility but cannot enforce them. Per-request token usage is unavailable; school points are a separate account balance. See [client compatibility](docs/reference.md#client-compatibility).
 

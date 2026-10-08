@@ -53,9 +53,11 @@ Appearance is stored in extension storage. Host settings and the local key live 
 
 Reading the school's catalog and sessions does not generate a response or change school settings. Discovery returns only model/session display metadata, never the school token or chat history. Select a session and click **Use session** to fill its name and default model in the local form, then **Save changes** to apply them. This does not change the school conversation. Unsafe or ambiguous sessions cannot be selected.
 
-An explicit API `model` always takes precedence over the configured default. Before generation, the bridge reads the selected school conversation and requires its model to match the resolved API model and its Context Count to be 0. A mismatch fails before any completion is sent. To use another model, select a matching school conversation in Settings, or change that conversation's model in the official interface.
+An explicit API `model` always takes precedence over the configured default. Before generation, the bridge reads the selected school conversation and requires its Context Count to be 0. If the model differs, it updates that conversation's model while preserving its other settings, then verifies the saved model, unchanged session ID, and Context Count 0 before sending a completion. A failed update or verification stops the request.
 
-The bridge never creates, modifies, clears, or deletes school conversations. Responses remain visible in the dedicated conversation. With Context Count 0, each request supplies the client's complete transcript as text. School-side prompt and generation settings still apply.
+Model changes persist. Failure or cancellation after an update can leave the new model selected; the bridge does not roll back changes or retry automatically. Reserve the selected conversation exclusively for the bridge, and do not manually edit it or send messages there while a request is active.
+
+The bridge never creates, clears, or deletes school conversations. Responses remain visible in the dedicated conversation. With Context Count 0, each request supplies the client's complete transcript as text. School-side prompt and generation settings still apply.
 
 ## API
 
@@ -79,7 +81,7 @@ One user message becomes plain text. Multiple messages become a transcript with 
 
 ### Images
 
-Use Chat Completions `image_url` content parts or Responses `input_image` parts. Supply a base64 data URL or a public HTTPS image URL. Remote images are downloaded without school credentials; private, loopback, link-local, credential-bearing, and unsafe redirect destinations are rejected. The host validates the image, transfers it in bounded Native Messaging chunks, and the signed-in page uploads it through the school's official multipart endpoint. The resulting attachment URLs accompany the completion. The model must advertise `multimodal` support, and the dedicated session must match it before any upload starts.
+Use Chat Completions `image_url` content parts or Responses `input_image` parts. Supply a base64 data URL or a public HTTPS image URL. Remote images are downloaded without school credentials; private, loopback, link-local, credential-bearing, and unsafe redirect destinations are rejected. The host validates the image, transfers it in bounded Native Messaging chunks, and the signed-in page uploads it through the school's official multipart endpoint. The resulting attachment URLs accompany the completion. Before uploading, the bridge checks that the requested model advertises `multimodal` support and verifies the dedicated session's saved model, switching it automatically when needed.
 
 The bridge accepts PNG, JPEG, static GIF, and WebP: at most four images, 10 MiB per image, 16 MiB of decoded image bytes per request, 16,384 pixels per side, and 40 megapixels per image. HTTP requests and serialized native jobs are limited to 24 MiB, including base64 overhead and text. The school's own limits may be lower. Images remain ordered and are referenced in the text transcript. Omit `detail` or use `auto`; resolution selection and OpenAI-hosted file IDs are not supported.
 
@@ -172,7 +174,7 @@ Run this from the extracted native package; use `.\xipu-bridge.exe` on Windows, 
 | Native host not found | Register for this browser and the extension's current ID |
 | Host exits immediately | Check for a port conflict, invalid config, or an OS execution restriction |
 | No connected tab | Refresh the signed-in school tab after reloading the extension |
-| Model/session mismatch | Match the chosen conversation's model and set Context Count 0 |
+| Model switch or session validation fails | Check the requested model, unique conversation name, and Context Count 0; inspect the saved school model after a failed update |
 | Saved port differs from base URL | Reconnect while idle to bind the saved port |
 | API 401 after rotation | Copy the new local key into the client |
 | Settings save or discovery fails | Read the error, reconnect if necessary, then explicitly reload or retry |

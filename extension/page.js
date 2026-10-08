@@ -44,19 +44,28 @@
     } catch { return ""; }
   }
 
-  function check(body) {
+  function schoolError(body, fallback, operation = "") {
+    const message = [body?.msg, body?.message].find(value => typeof value === "string" && value.trim());
+    const code = body?.code;
+    const numericCode = Number.isSafeInteger(code)
+      || (typeof code === "string" && /^-?\d{1,16}$/.test(code) && Number.isSafeInteger(Number(code)));
+    const detail = message || `${fallback}${numericCode ? ` (school code ${code})` : ""}`;
+    return new Error(`${operation ? `${operation}: ` : ""}${detail}`);
+  }
+
+  function check(body, operation = "") {
     if (body?.code !== undefined && body.code !== 0 && body.code !== "0") {
-      throw new Error(body.msg || body.message || "The school API rejected the request.");
+      throw schoolError(body, "The school API rejected the request", operation);
     }
     return body;
   }
 
-  async function asJSON(response) {
+  async function asJSON(response, operation = "") {
     let body;
     try { body = await response.json(); }
-    catch { throw new Error(`The school API returned invalid JSON (HTTP ${response.status}). Check the logged-in tab.`); }
-    if (!response.ok) throw new Error(body?.msg || body?.message || `HTTP ${response.status}`);
-    return check(body);
+    catch { throw schoolError(null, `The school API returned invalid JSON (HTTP ${response.status}). Check the logged-in tab.`, operation); }
+    if (!response.ok) throw schoolError(body, `HTTP ${response.status}`, operation);
+    return check(body, operation);
   }
 
   async function pump(job, response) {
@@ -123,13 +132,13 @@
     const options = { credentials: "include", signal: controllers.get(job).signal, headers: { "Jm-Token": token } };
     if (op === "models" || op === "inspect") {
       const response = await window.fetch(`${API}/api/chat/config?lang=${encodeURIComponent(lang)}`, options);
-      const catalog = await asJSON(response);
+      const catalog = await asJSON(response, "Load model catalog");
       if (op === "models") {
         emit(job, { kind: "result", result: catalog });
         return;
       }
       const listing = await window.fetch(`${API}/api/chat/session?lang=${encodeURIComponent(lang)}`, options);
-      const sessions = await asJSON(listing);
+      const sessions = await asJSON(listing, "Read school session");
       if (!Array.isArray(catalog?.data?.models) || !Array.isArray(sessions?.data)) {
         throw new Error("The school API returned an invalid model or session list.");
       }
@@ -149,30 +158,60 @@
     if (typeof payload.session_name !== "string" || !payload.session_name.trim()) {
       throw new Error("Configure a dedicated school session before sending chat requests.");
     }
+    if (typeof payload.model !== "string" || !payload.model.trim()) throw new Error("Specify a school model.");
     const images = validateImages(payload.images);
+    let catalog;
+    async function requestedModel() {
+      if (!catalog) {
+        options.signal.throwIfAborted();
+        const response = await window.fetch(`${API}/api/chat/config?lang=${encodeURIComponent(lang)}`, options);
+        catalog = await asJSON(response, "Load model catalog");
+      }
+      if (!Array.isArray(catalog?.data?.models)) throw new Error("The school API returned an invalid model list.");
+      const model = catalog.data.models.find(item => (typeof item === "string" ? item : item?.value || item?.model || item?.name) === payload.model);
+      if (!model) throw new Error("The requested model is not available in the school model list.");
+      return model;
+    }
+    async function readSession() {
+      options.signal.throwIfAborted();
+      const response = await window.fetch(`${API}/api/chat/session?lang=${encodeURIComponent(lang)}`, options);
+      const body = await asJSON(response, "Read school session");
+      if (!Array.isArray(body?.data)) throw new Error("The school API returned an invalid session list.");
+      const matches = body.data.filter(item => item?.name === payload.session_name);
+      if (matches.length !== 1) throw new Error(`Exactly one school session must be named "${payload.session_name}".`);
+      const session = matches[0];
+      const validID = typeof session.id === "string" ? !!session.id.trim() && session.id === session.id.trim()
+        : Number.isSafeInteger(session.id) && session.id > 0;
+      if (!validID) throw new Error("The school API did not return a valid session ID.");
+      if (session.contextCount !== 0) throw new Error("The dedicated session must use Context Count 0. No completion was sent.");
+      return { session, status: response.status, code: body.code };
+    }
     if (images.length) {
-      const response = await window.fetch(`${API}/api/chat/config?lang=${encodeURIComponent(lang)}`, options);
-      const catalog = await asJSON(response);
-      const model = catalog?.data?.models?.find(item => (item?.value || item?.model || item?.name) === payload.model);
+      const model = await requestedModel();
       if (model?.multimodal !== true && model?.multimodal !== 1) {
         throw new Error("The requested school model does not advertise image support. No image was uploaded.");
       }
     }
-    options.signal.throwIfAborted();
-    const response = await window.fetch(`${API}/api/chat/session?lang=${encodeURIComponent(lang)}`, options);
-    const body = await asJSON(response);
-    if (!Array.isArray(body?.data)) throw new Error("The school API returned an invalid session list.");
-    const matches = body.data.filter(item => item?.name === payload.session_name);
-    if (matches.length !== 1) throw new Error(`Exactly one school session must be named "${payload.session_name}".`);
-    const session = matches[0];
-    if (session.model !== payload.model || session.contextCount !== 0) {
-      throw new Error("The dedicated session must use the requested model and Context Count 0. No completion was sent.");
-    }
-    if ((typeof session.id !== "number" && typeof session.id !== "string") || !session.id) {
-      throw new Error("The school API did not return a valid session ID.");
+    let selected = await readSession();
+    let session = selected.session;
+    if (session.model !== payload.model) {
+      await requestedModel();
+      options.signal.throwIfAborted();
+      const saved = await asJSON(await window.fetch(`${API}/api/chat/saveSession`, {
+        ...options, method: "POST", headers: { ...options.headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ ...session, model: payload.model, lang })
+      }), "Update school session");
+      if (!saved || typeof saved !== "object" || Array.isArray(saved) || (saved.code !== 0 && saved.code !== "0")) {
+        throw new Error("The school API returned an invalid session update result.");
+      }
+      selected = await readSession();
+      if (selected.session.id !== session.id || selected.session.model !== payload.model) {
+        throw new Error("The school session did not retain the requested model and identity. No completion was sent.");
+      }
+      session = selected.session;
     }
     emit(job, { kind: "lifecycle", result: {
-      path: "/api/chat/session", status: response.status, code: body.code,
+      path: "/api/chat/session", status: selected.status, code: selected.code,
       id: session.id, model: session.model, contextCount: session.contextCount
     }});
     const files = [];

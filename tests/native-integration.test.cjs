@@ -14,7 +14,8 @@ const extensionID = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const schoolOrigin = 'https://xipuai-xjtlu-edu-cn-s.xjtlu.edu.cn';
 const token = 'synthetic-school-token';
 const model = 'synthetic-paid-model';
-const session = { id: 8, name: 'Synthetic dedicated session', model, contextCount: 0 };
+const secondModel = 'synthetic-second-model';
+const session = { id: 8, name: 'Synthetic dedicated session', model, contextCount: 0, temperature: 0.3, prompt: '', plugins: [] };
 const event = () => ({ listeners: [], addListener(fn) { this.listeners.push(fn); }, emit(...args) { for (const fn of this.listeners) fn(...args); } });
 const pair = () => {
   const a = { onMessage: event(), onDisconnect: event() }, b = { onMessage: event(), onDisconnect: event() };
@@ -90,7 +91,8 @@ async function main() {
   Object.assign(background, { name: 'xipu', sender: { id: extensionID, frameId: 0, url: schoolOrigin + '/v3/chat' } });
   chrome.runtime.onConnect.emit(background);
   const listeners = [], calls = [];
-  let uploadFails = false;
+  let uploadFails = false, ignoreModelSave = false;
+  let schoolSession = { ...session };
   const uploadedURL = 'https://tosai.xjtlu.edu.cn/synthetic-image.png';
   const png = imageFixture();
   const window = {
@@ -111,8 +113,17 @@ async function main() {
         return new Response(JSON.stringify(uploadFails ? { code: 429, msg: 'Synthetic upload rate limit' } : { code: 0, data: { url: uploadedURL } }), { status: uploadFails ? 429 : 200 });
       }
       calls.push({ url, body: options.body && JSON.parse(options.body) });
-      if (url.includes('/api/chat/config?')) return new Response(JSON.stringify({ code: 0, data: { models: [{ value: model, label: 'Synthetic model', multimodal: true }] } }));
-      if (url.includes('/api/chat/session?')) return new Response(JSON.stringify({ code: 0, data: [session] }));
+      if (url.includes('/api/chat/config?')) return new Response(JSON.stringify({ code: 0, data: { models: [{ value: model, label: 'Synthetic model', multimodal: true }, { value: secondModel, label: 'Second model', multimodal: true }] } }));
+      if (url.includes('/api/chat/session?')) return new Response(JSON.stringify({ code: 0, data: [schoolSession] }));
+      if (url.endsWith('/api/chat/saveSession')) {
+        const body = calls.at(-1).body;
+        assert.equal(options.method, 'POST');
+        assert.equal(options.headers['Content-Type'], 'application/json');
+        assert.ok([model, secondModel].includes(body.model));
+        assert.deepEqual(body, { ...schoolSession, model: body.model, lang: 'en' });
+        if (!ignoreModelSave) schoolSession = { ...schoolSession, model: body.model };
+        return new Response(JSON.stringify({ code: 0 }));
+      }
       assert.ok(url.endsWith('/api/chat/completions'));
       assert.equal(calls.at(-1).body.sessionId, session.id);
       if (calls.at(-1).body.text === 'TRUNCATE') {
@@ -120,7 +131,9 @@ async function main() {
       }
       const prompt = calls.at(-1).body.text;
       let answer = 'INTEGRATION_OK';
-      if (prompt.includes('IMAGE_CASE')) {
+      if (prompt.startsWith('ROUTE_CASE')) {
+        answer = 'ROUTED:' + schoolSession.model;
+      } else if (prompt.includes('IMAGE_CASE')) {
         assert.deepEqual(calls.at(-1).body.files, [uploadedURL]);
         answer = 'IMAGE_OK';
       } else if (prompt.includes('TOOL_SECOND')) {
@@ -283,11 +296,37 @@ async function main() {
         assert.equal(body.choices, undefined);
       }
     }
+    for (const [endpoint, requestedModel, stream] of [
+      ['/chat/completions', secondModel, false], ['/responses', model, true],
+      ['/responses', secondModel, false], ['/chat/completions', model, true],
+      ['/chat/completions', model, false]
+    ]) {
+      const beforeCalls = calls.length;
+      const changes = schoolSession.model !== requestedModel;
+      const input = endpoint === '/responses' ? { input: 'ROUTE_CASE' } : { messages: [{ role: 'user', content: 'ROUTE_CASE' }] };
+      const routed = await fetch(base_url + endpoint, { method: 'POST', headers, body: JSON.stringify({ model: requestedModel, stream, ...input }) });
+      assert.equal(routed.status, 200, await routed.clone().text());
+      const result = await routed.text();
+      assert.ok(result.includes('ROUTED:' + requestedModel), 'completion used the wrong school model');
+      assert.equal(schoolSession.model, requestedModel);
+      const paths = calls.slice(beforeCalls).map(call => new URL(call.url).pathname);
+      assert.equal(paths.filter(path => path.endsWith('/api/chat/saveSession')).length, changes ? 1 : 0);
+      assert.equal(paths.filter(path => path.endsWith('/api/chat/session')).length, changes ? 2 : 1);
+      assert.ok(paths.at(-1).endsWith('/api/chat/completions'));
+      if (changes) assert.ok(paths.at(-2).endsWith('/api/chat/session'), 'saved model was not verified before generation');
+      if (stream) assert.ok(result.includes(endpoint === '/responses' ? 'response.completed' : 'data: [DONE]'));
+    }
     const before = calls.filter(x => x.url.endsWith('/api/chat/completions')).length;
-    const mismatch = await fetch(base_url + '/chat/completions', { method: 'POST', headers, body: JSON.stringify({ model: 'different-model', messages: [{ role: 'user', content: 'Do not generate' }] }) });
-    assert.equal(mismatch.status, 502);
-    assert.match((await mismatch.json()).error.message, /requested model/);
+    const unknown = await fetch(base_url + '/chat/completions', { method: 'POST', headers, body: JSON.stringify({ model: 'unknown-model', messages: [{ role: 'user', content: 'Do not generate' }] }) });
+    assert.equal(unknown.status, 502);
+    assert.match((await unknown.json()).error.message, /model/i);
     assert.equal(calls.filter(x => x.url.endsWith('/api/chat/completions')).length, before);
+    ignoreModelSave = true;
+    const unconfirmed = await fetch(base_url + '/responses', { method: 'POST', headers, body: JSON.stringify({ model: secondModel, input: 'Do not generate' }) });
+    assert.equal(unconfirmed.status, 502);
+    assert.match((await unconfirmed.json()).error.message, /model|session/i);
+    assert.equal(calls.filter(x => x.url.endsWith('/api/chat/completions')).length, before);
+    ignoreModelSave = false;
     const saved = await ui({ type: 'saveSettings', config: { default_model: model, thinking: 'high', online: true, include_reasoning: false } });
     assert.equal(saved.ok, true);
     assert.equal(saved.restartRequired, false);
@@ -313,7 +352,7 @@ async function main() {
     const [code] = await exited;
     assert.equal(code, 0, errorOutput);
     assert.equal(errorOutput, '');
-    console.log('native integration passed: real Go process, all extension worlds, token-limit compatibility and unknown usage, chunked PNG upload, upload failure without retry, Responses JSON/SSE/vision, tool round trip, JSON Schema validation, settings/key rotation and clean EOF');
+    console.log('native integration passed: real Go process, all extension worlds, verified model switching, token-limit compatibility and unknown usage, chunked PNG upload, upload failure without retry, Responses JSON/SSE/vision, tool round trip, JSON Schema validation, settings/key rotation and clean EOF');
   } finally {
     clearTimeout(deadline);
     if (child.exitCode === null && child.signalCode === null) { const stopped = once(child, 'exit'); child.kill(); await stopped; }

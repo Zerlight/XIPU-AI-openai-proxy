@@ -217,7 +217,7 @@
         element("model-catalog").appendChild(option);
       }
       element("discovery-results").hidden = false;
-      element("discovery-info").textContent = `${sessions.filter(session => session.safe).length} usable sessions. Duplicate names and nonzero context counts cannot be selected. Using a session fills its name and default model in this form.`;
+      element("discovery-info").textContent = `${sessions.filter(session => session.safe).length} usable sessions. Duplicate names and nonzero context counts cannot be selected. Using a session fills its name and default model in this form; your client can choose another model.`;
       message("notice", "Sessions and models loaded. No school conversation was changed.");
     } catch (error) { message("error", error.message || "Could not read XIPU AI sessions."); }
     finally { finishOperation(); }

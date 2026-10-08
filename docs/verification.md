@@ -18,7 +18,7 @@ devenv shell -- bash packaging/check.sh
 | Client compatibility | Accepted token-limit fields, invalid and conflicting values, ignored-parameter headers, unknown usage, and CORS header access |
 | Native Messaging | Framing, bounded chunk assembly, ordering, disconnects, reconnect without replay, and clean shutdown |
 | Extension integration | A real Go subprocess connected through background, isolated content, and page scripts using a synthetic school API |
-| School request boundaries | Model/session validation, Context Count 0, unchanged compatibility prompts, no automatic retries, and school-token containment |
+| School request boundaries | Automatic model updates preserving other settings, saved model/session-ID verification, Context Count 0, unchanged compatibility prompts, no automatic retries, and school-token containment |
 | Images | PNG/JPEG/GIF/WebP validation, dimension and byte limits, safe public HTTPS retrieval, chunked transport, multipart upload, and upload failure without generation |
 | Tools and structured output | Function-call round trips, call-ID matching, argument validation, JSON Schema output, bounded schema processing, and blocked external resources |
 | Settings and UI | Validated drafts, persistence failures, busy/offline states, key rotation, theme changes, clipboard errors, select keyboard behavior, and focus handling |
@@ -30,7 +30,7 @@ The CI workflow runs checks on macOS, Linux, and Windows. Release builds target 
 
 ## Verification limits
 
-- Synthetic integration tests cannot establish compatibility with changes to the live school service. Browser startup, authentication, proxy behavior, and model capabilities need separate end-to-end verification.
+- Synthetic integration tests cannot establish compatibility with changes to the live school service. Browser startup, authentication, proxy behavior, model updates, and model capabilities need separate end-to-end verification. Session verification cannot prevent a concurrent edit from another client or the school interface.
 - Cross-compilation and installer tests do not establish browser-level support on every OS, architecture, or browser distribution. Snap and Flatpak installations may require additional native-host integration.
 - Download quarantine, OS trust prompts, signing, and notarization are outside unit-test coverage. Native packages are unsigned.
 - UI fixtures simulate browser extension APIs. They do not verify browser-store installation or native-host registration.

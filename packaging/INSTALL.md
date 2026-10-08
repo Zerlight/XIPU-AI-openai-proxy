@@ -17,12 +17,17 @@ account; do not run the installer with `sudo` or as Administrator.
    **Load unpacked** and select the extracted extension folder containing
    `manifest.json`. Keep that folder in place.
 4. Sign in to XIPU AI and refresh the tab. Create a dedicated conversation named
-   **XIPU AI Bridge**, choose your model, leave its system prompt empty, and set
-   **Context Count** to **0**.
+   **XIPU AI Bridge** exclusively for the bridge. Leave its system prompt empty
+   and set **Context Count** to **0**. Its initial model can be any available model.
 5. Open the extension's **Settings** and click **Load from XIPU AI**. Select your
    conversation, then click **Use session** and **Save changes**. Copy the base
-   URL and API key from the popup into your client, and choose the same model as
-   the school conversation. Keep the XIPU AI tab signed in.
+   URL and API key from the popup into your client. Choose any available model
+   in the client; the bridge updates the school conversation automatically.
+   Keep the XIPU AI tab signed in.
+
+Model changes persist, including after a failed or cancelled request. Do not
+manually edit or send messages in the dedicated conversation while a request
+is active.
 
 The native binaries are unsigned, so your operating system may warn or block
 execution. Follow its normal security controls.

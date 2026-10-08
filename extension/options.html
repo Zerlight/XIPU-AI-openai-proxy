@@ -38,11 +38,11 @@
                 <header data-slot="frame-panel-header"><h2 data-slot="frame-panel-title">Model &amp; session</h2><p data-slot="frame-panel-description">Use a dedicated conversation with context count set to 0.</p></header>
                 <div data-slot="frame-panel">
                   <div class="setting-row">
-                    <div class="setting-label"><label for="session_name">Session name</label><p class="description" id="session-help">Match exactly one conversation in XIPU AI.</p></div>
+                    <div class="setting-label"><label for="session_name">Session name</label><p class="description" id="session-help">Use a unique name and reserve this conversation for the bridge.</p></div>
                     <div class="setting-control"><span data-slot="input-control"><input id="session_name" data-slot="input" type="text" value="XIPU AI Bridge" maxlength="200" required aria-describedby="session-help"></span></div>
                   </div>
                   <div class="setting-row">
-                    <div class="setting-label"><label for="default_model">Default model</label><p class="description" id="model-help">Used when your client omits a model.</p></div>
+                    <div class="setting-label"><label for="default_model">Default model</label><p class="description" id="model-help">Used when the client omits a model. Its explicit choice takes priority.</p></div>
                     <div class="setting-control"><span data-slot="input-control"><input id="default_model" data-slot="input" type="text" list="model-catalog" placeholder="Let the client choose" maxlength="200" spellcheck="false" aria-describedby="model-help"></span><datalist id="model-catalog"></datalist></div>
                   </div>
                   <div class="setting-row">
@@ -57,7 +57,7 @@
                     <p id="discovery-info" class="description panel-note"></p>
                   </div>
                 </div>
-                <p data-slot="frame-panel-footer" class="description">Your client’s model must match the selected school session.</p>
+                <p data-slot="frame-panel-footer" class="description">The school model switches automatically and stays changed, including after failure or cancellation. Do not edit or send messages in this conversation while a request is active.</p>
               </div>
 
               <div data-slot="frame" class="settings-frame">

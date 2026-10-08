@@ -30,7 +30,8 @@ async function run(op, responses, body = payload, cancel = false) {
       assert.equal(options.credentials, 'include');
       const next = responses.shift();
       assert.ok(next, 'unexpected school request');
-      if (cancel === 'upload' && url.endsWith('/api/common/upload')) queueMicrotask(() => {
+      const cancelPath = { upload: '/api/common/upload', catalog: '/api/chat/config?lang=en', save: '/api/chat/saveSession' }[cancel];
+      if (cancelPath && url.endsWith(cancelPath)) queueMicrotask(() => {
         listener({ source: window, data: { source: 'xipu-bridge', type: 'cancel', job: 'test-job' } });
       });
       return typeof next === 'function' ? next(options) : next;
@@ -86,12 +87,92 @@ async function main() {
   assert.deepEqual(response.calls[1].body, {
     text: payload.text, files: [], online: 0, thinking: 'minimal', sessionId: 42, responseId: null, lang: 'en'
   });
-  assert.equal(response.calls.length, 2, 'never create, change or delete a school session');
-  for (const invalid of [[], [session, session], [{ ...session, model: 'other-model' }], [{ ...session, contextCount: 1 }], [{ ...session, id: null }]]) {
+  assert.equal(response.calls.length, 2, 'same-model requests must not fetch the catalog or change the session');
+  for (const invalid of [[], [session, session], [{ ...session, contextCount: 1 }], [{ ...session, contextCount: '0' }],
+    ...[null, 0, -1, 0.5, Number.MAX_SAFE_INTEGER + 1, '', ' ', ' 42', false, {}].map(id => [{ ...session, id }])]) {
     const result = await run('chat', [list(invalid)]);
     assert.ok(result.error);
     assert.equal(result.calls.length, 1, 'reject invalid session before any completion');
   }
+  const previous = { ...session, model: 'another-model', maxToken: 128, temperature: 0.7, top_p: 0.9,
+    presencePenalty: 0.3, frequencyPenalty: 0.1, prompt: 'Synthetic session instruction', topSort: 2,
+    icon: 'synthetic-icon', plugins: ['synthetic-plugin'], extra: { preserved: true } };
+  const updated = { ...previous, model };
+  const switchCatalog = () => json({ code: 0, data: { models: [{ value: model }] } });
+  const reply = () => json({ code: 0, type: 'object', data: { aiText: 'OK' } });
+  for (const [op, responses, operation, code] of [
+    ['models', [], 'Load model catalog', 17],
+    ['chat', [], 'Read school session', '23'],
+    ['chat', [list([previous]), switchCatalog()], 'Update school session', -9]
+  ]) {
+    const rejected = await run(op, [...responses, json({ code, msg: { token: 'synthetic-school-token' },
+      message: ['private error details'], data: { request: 'private response body', token: 'synthetic-school-token' } })]);
+    assert.equal(rejected.error, `${operation}: The school API rejected the request (school code ${code})`);
+    assert.ok(!JSON.stringify(rejected.events).includes('private'), 'error objects and response bodies must not be exposed');
+  }
+  const namedError = await run('chat', [list([previous]), switchCatalog(), json({ code: 23, msg: 'Model update denied' })]);
+  assert.equal(namedError.error, 'Update school session: Model update denied', 'preserve the server message with an operation prefix');
+  const httpError = await run('models', [json({ code: '403', msg: {}, data: 'private response body' }, 403)]);
+  assert.equal(httpError.error, 'Load model catalog: HTTP 403 (school code 403)');
+  const httpWithoutCode = await run('chat', [json({ data: 'private response body' }, 503)]);
+  assert.equal(httpWithoutCode.error, 'Read school session: HTTP 503');
+  const nonnumericCode = await run('models', [json({ code: 'synthetic-school-token', message: {} })]);
+  assert.equal(nonnumericCode.error, 'Load model catalog: The school API rejected the request', 'do not expose unknown code values');
+  const invalidJSON = await run('models', [new Response('private response body', { status: 502 })]);
+  assert.equal(invalidJSON.error, 'Load model catalog: The school API returned invalid JSON (HTTP 502). Check the logged-in tab.');
+  for (const code of [0, '0']) {
+    const switched = await run('chat', [list([previous]), switchCatalog(), json({ code }), list([updated]), reply()]);
+    assert.equal(switched.error, undefined);
+    assert.deepEqual(switched.calls.map(x => new URL(x.url).pathname), ['/jmapi/api/chat/session', '/jmapi/api/chat/config',
+      '/jmapi/api/chat/saveSession', '/jmapi/api/chat/session', '/jmapi/api/chat/completions']);
+    assert.equal(switched.calls[2].method, 'POST');
+    assert.equal(switched.calls[2].headers['Content-Type'], 'application/json');
+    assert.deepEqual(switched.calls[2].body, { ...previous, model, lang: 'en' }, 'preserve every unrelated session field');
+    assert.equal(switched.calls[4].body.sessionId, session.id);
+    assert.equal(switched.calls[4].body.responseId, null);
+    assert.equal(switched.events.find(x => x.kind === 'lifecycle').result.model, model, 'report the verified session model');
+    assert.ok(!JSON.stringify(switched.events).includes('Synthetic session instruction'), 'session configuration stays in the page');
+  }
+  const opaqueID = 'synthetic-session-id';
+  const stringID = await run('chat', [list([{ ...previous, id: opaqueID }]),
+    json({ code: 0, data: { models: [model] } }), json({ code: 0 }), list([{ ...updated, id: opaqueID }]), reply()]);
+  assert.equal(stringID.error, undefined);
+  assert.equal(stringID.calls.at(-1).body.sessionId, opaqueID);
+  for (const invalid of [[], [{ ...updated, id: 43 }], [{ ...updated, id: '42' }], [{ ...updated, name: 'Renamed session' }],
+    [{ ...updated, model: previous.model }], [{ ...updated, contextCount: 1 }], [updated, updated]]) {
+    const rejected = await run('chat', [list([previous]), switchCatalog(), json({ code: 0 }), list(invalid)]);
+    assert.ok(rejected.error, 'reject a changed or ambiguous session after saving');
+    assert.ok(!rejected.error.includes('No session was changed'), 'an accepted update may remain after failed verification');
+    assert.equal(rejected.calls.length, 4, 'failed verification must not complete, retry or roll back');
+    assert.equal(rejected.calls.filter(x => x.url.endsWith('/api/chat/saveSession')).length, 1);
+  }
+  for (const body of [null, {}, { code: 0, data: null }, { code: 0, data: { models: {} } },
+    { code: 0, data: { models: [{ value: 'unknown-model' }] } }]) {
+    const rejected = await run('chat', [list([previous]), json(body)]);
+    assert.ok(rejected.error);
+    assert.equal(rejected.calls.length, 2, 'unknown models and malformed catalogs must not mutate the session');
+  }
+  const unsafeSwitch = await run('chat', [list([{ ...previous, contextCount: 1 }])]);
+  assert.match(unsafeSwitch.error, /Context Count/);
+  assert.equal(unsafeSwitch.calls.length, 1);
+  for (const response of [json({ code: 23, msg: 'update rejected' }), json({ code: 429, msg: 'rate limited' }, 429),
+    json({ code: 0 }, 429), json(null), json({}), json([]), json('invalid'), new Response('invalid JSON')]) {
+    const rejected = await run('chat', [list([previous]), switchCatalog(), response]);
+    assert.ok(rejected.error);
+    assert.equal(rejected.calls.length, 3, 'failed updates must not be retried, verified or completed');
+  }
+  for (const cancelAt of ['catalog', 'save']) {
+    const responses = [list([previous]), switchCatalog()];
+    if (cancelAt === 'save') responses.push(json({ code: 0 }));
+    const cancelled = await run('chat', responses, payload, cancelAt);
+    assert.ok(cancelled.error);
+    assert.equal(cancelled.calls.length, cancelAt === 'catalog' ? 2 : 3, 'cancellation must stop following requests without rollback');
+  }
+  const cancelledSave = await run('chat', [list([previous]), switchCatalog(), ({ signal }) => new Promise((resolve, reject) => {
+    signal.addEventListener('abort', () => reject(new Error('save cancelled')), { once: true });
+  })], payload, 'save');
+  assert.equal(cancelledSave.error, 'save cancelled');
+  assert.equal(cancelledSave.calls.length, 3);
   const missing = await run('chat', [], { model, text: 'test' });
   assert.ok(missing.error.includes('dedicated'));
   const rateLimit = await run('chat', [list(), json({ code: 429, msg: 'rate limited' }, 429)]);
@@ -126,6 +207,19 @@ async function main() {
   const image = { mime: 'image/png', name: 'sample.png', data: imageBytes.toString('base64') };
   const imagePayload = { ...payload, images: [image] };
   const imageReply = () => json({ code: 0, type: 'object', data: { aiText: 'image result' } });
+  const switchedImage = await run('chat', [catalog(), list([previous]), json({ code: 0 }), list([updated]),
+    json({ code: 0, data: { url: 'https://images.example.test/switched.png' } }), imageReply()], imagePayload);
+  assert.equal(switchedImage.error, undefined);
+  assert.deepEqual(switchedImage.calls.map(x => new URL(x.url).pathname), ['/jmapi/api/chat/config', '/jmapi/api/chat/session',
+    '/jmapi/api/chat/saveSession', '/jmapi/api/chat/session', '/jmapi/api/common/upload', '/jmapi/api/chat/completions']);
+  assert.equal(switchedImage.calls.filter(x => x.url.includes('/api/chat/config')).length, 1, 'reuse the image model catalog');
+  assert.deepEqual(switchedImage.calls[2].body, { ...previous, model, lang: 'en' });
+  const rejectedImageSwitch = await run('chat', [catalog(), list([previous]), json({ code: 0 }), list([previous])], imagePayload);
+  assert.ok(rejectedImageSwitch.error);
+  assert.equal(rejectedImageSwitch.calls.length, 4, 'image upload must wait for successful switch verification');
+  const cancelledImageSwitch = await run('chat', [catalog(), list([previous]), json({ code: 0 })], imagePayload, 'save');
+  assert.ok(cancelledImageSwitch.error);
+  assert.equal(cancelledImageSwitch.calls.length, 3, 'cancelled updates must not upload images');
   for (const field of ['url', 'file_url']) {
     const result = await run('chat', [catalog(), list(), json({ code: 0, data: { [field]: 'https://images.example.test/upload.png', private: 'synthetic-school-token' } }), imageReply()], imagePayload);
     assert.equal(result.error, undefined);
@@ -176,6 +270,6 @@ async function main() {
     assert.ok(invalid.error);
     assert.equal(invalid.calls.length, 0, 'invalid images must fail before school requests');
   }
-  console.log('page checks passed: session/model guards, chunked SSE, JSON, image upload, cancellation, no retry, token containment');
+  console.log('page checks passed: verified model switching, session guards, chunked SSE, JSON, image upload, cancellation, no retry, token containment');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });
