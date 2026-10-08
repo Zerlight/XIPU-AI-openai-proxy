@@ -71,7 +71,7 @@ Keep this folder in place. The extension is already configured to connect to the
 Keep the XIPU AI tab signed in. **The model requested by your client must match the selected conversation's model.**
 
 > [!NOTE]
-> Native packages are not code-signed or notarized; your operating system may block them. macOS ARM64 has passed live acceptance checks; other platforms still need browser-level verification. See [installation options](docs/reference.md#installation-options) for Edge/Chromium and [troubleshooting](docs/reference.md#uninstall-and-troubleshooting) if setup fails.
+> Native packages are not code-signed or notarized; your operating system may block them. Browser integration requires platform-specific verification. See [installation options](docs/reference.md#installation-options) for Edge/Chromium and [troubleshooting](docs/reference.md#uninstall-and-troubleshooting) if setup fails.
 
 ## Connect your client
 
@@ -88,6 +88,8 @@ Both `/v1/chat/completions` and `/v1/responses` are available. The model list co
 
 The bridge uses your existing school access and usage allowance. It handles one request at a time and does not retry failed school requests automatically. Conversations and uploaded images remain on the school service.
 
+**Client token limits do not cap generation or charges.** The bridge accepts `max_tokens`, `max_completion_tokens`, and `max_output_tokens` for compatibility but cannot enforce them. Per-request token usage is unavailable; school points are a separate account balance. See [client compatibility](docs/reference.md#client-compatibility).
+
 Image input requires a vision-capable model. Function calls and JSON Schema output are prompted and validated by the bridge; they do not enable native tool calling or constrained decoding on the school server. The Responses API is stateless: clients must supply conversation history.
 
 ## Documentation
@@ -98,7 +100,7 @@ Image input requires a vision-capable model. Function calls and JSON Schema outp
 | [API reference](docs/reference.md#api) | Text, images, streaming, function calls, structured output, and compatibility limits |
 | [Installation and troubleshooting](docs/reference.md#installation-options) | Other browsers, upgrades, uninstalling, and common errors |
 | [Security boundaries](docs/reference.md#security-boundaries) | Authentication, token handling, and local access |
-| [Verification record](docs/verification.md) | Tests, live acceptance results, and platform limitations |
+| [Testing guide](docs/verification.md) | Automated coverage and verification limits |
 
 ## Development
 

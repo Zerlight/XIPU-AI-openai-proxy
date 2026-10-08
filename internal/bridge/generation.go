@@ -298,11 +298,42 @@ type chatRequest struct {
 	Store           *bool             `json:"store"`
 	StreamOptions   json.RawMessage   `json:"stream_options"`
 	N               *int              `json:"n"`
+	MaxTokens       *int64            `json:"max_tokens"`
+	MaxCompletion   *int64            `json:"max_completion_tokens"`
+}
+
+type tokenLimit struct {
+	name  string
+	value *int64
+}
+
+func ignoredTokenLimits(limits ...tokenLimit) (string, error) {
+	var names []string
+	var previous *int64
+	for _, limit := range limits {
+		if limit.value == nil {
+			continue
+		}
+		if *limit.value <= 0 {
+			return "", fmt.Errorf("%s must be a positive integer or null", limit.name)
+		}
+		if previous != nil && *previous != *limit.value {
+			return "", errors.New("Conflicting max_tokens and max_completion_tokens values")
+		}
+		previous = limit.value
+		names = append(names, limit.name)
+	}
+	return strings.Join(names, ", "), nil
 }
 
 func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	var body chatRequest
-	if err := readRequest(w, r, &body, "model", "messages", "stream", "thinking", "reasoning_effort", "online", "temperature", "tools", "tool_choice", "parallel_tool_calls", "response_format", "store", "stream_options", "n"); err != nil {
+	if err := readRequest(w, r, &body, "model", "messages", "stream", "thinking", "reasoning_effort", "online", "temperature", "tools", "tool_choice", "parallel_tool_calls", "response_format", "store", "stream_options", "n", "max_tokens", "max_completion_tokens"); err != nil {
+		apiError(w, 400, "invalid_request", err.Error())
+		return
+	}
+	ignored, err := ignoredTokenLimits(tokenLimit{"max_tokens", body.MaxTokens}, tokenLimit{"max_completion_tokens", body.MaxCompletion})
+	if err != nil {
 		apiError(w, 400, "invalid_request", err.Error())
 		return
 	}
@@ -318,12 +349,12 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 400, "unsupported_parameter", "Only n=1 is supported")
 		return
 	}
+	var options struct {
+		IncludeUsage bool `json:"include_usage"`
+	}
 	if len(body.StreamOptions) > 0 && string(body.StreamOptions) != "null" {
-		var options struct {
-			IncludeUsage bool `json:"include_usage"`
-		}
-		if err := decodeObject(body.StreamOptions, &options, "include_usage"); err != nil || options.IncludeUsage {
-			apiError(w, 400, "unsupported_parameter", "Stream usage reporting is not supported")
+		if err := decodeObject(body.StreamOptions, &options, "include_usage"); err != nil {
+			apiError(w, 400, "invalid_request", err.Error())
 			return
 		}
 	}
@@ -346,7 +377,13 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		apiError(w, 400, "invalid_request", err.Error())
 		return
 	}
-	s.generate(w, r, generation, &chatOutput{writer: w})
+	if ignored != "" {
+		w.Header().Set("X-XIPU-Ignored-Parameters", ignored)
+	}
+	if options.IncludeUsage {
+		w.Header().Set("X-XIPU-Usage", "unavailable")
+	}
+	s.generate(w, r, generation, &chatOutput{writer: w, includeUsage: options.IncludeUsage})
 }
 
 type generationOutput interface {
@@ -510,13 +547,18 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, request genera
 }
 
 type chatOutput struct {
-	writer    http.ResponseWriter
-	id, model string
-	created   int64
+	writer       http.ResponseWriter
+	id, model    string
+	created      int64
+	includeUsage bool
 }
 
 func (o *chatOutput) chunk(delta map[string]any, finish any) map[string]any {
-	return map[string]any{"id": o.id, "object": "chat.completion.chunk", "created": o.created, "model": o.model, "choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": finish}}}
+	chunk := map[string]any{"id": o.id, "object": "chat.completion.chunk", "created": o.created, "model": o.model, "choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": finish}}}
+	if o.includeUsage {
+		chunk["usage"] = nil
+	}
+	return chunk
 }
 func (o *chatOutput) start(id, model string, created int64) error {
 	o.id = "chatcmpl-" + id
@@ -567,5 +609,9 @@ func (o *chatOutput) response(result generationResult) map[string]any {
 	if result.reasoning != "" {
 		answer["reasoning_content"] = result.reasoning
 	}
-	return map[string]any{"id": o.id, "object": "chat.completion", "created": o.created, "model": o.model, "choices": []any{map[string]any{"index": 0, "message": answer, "finish_reason": finish}}}
+	response := map[string]any{"id": o.id, "object": "chat.completion", "created": o.created, "model": o.model, "choices": []any{map[string]any{"index": 0, "message": answer, "finish_reason": finish}}}
+	if o.includeUsage {
+		response["usage"] = nil
+	}
+	return response
 }

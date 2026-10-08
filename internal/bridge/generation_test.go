@@ -152,7 +152,7 @@ func TestSchemaNetworkAccessAndUnsupportedSemanticsRejectedBeforeSchool(t *testi
 		`{"response_format":{"type":"json_schema","json_schema":{"name":"bad","schema":{"$ref":"https://example.com/schema"}}}}`,
 		`{"response_format":{"type":"json_schema","json_schema":{"name":"bad","schema":{"$schema":"https://example.com/schema"}}}}`,
 		`{"response_format":{"type":"json_schema","json_schema":{"name":"bad","schema":{"$ref":"file:///etc/passwd"}}}}`,
-		`{"max_tokens":2}`, `{"tools":[{"type":"web_search"}]}`, `{"n":2}`, `{"stream_options":{"include_usage":true}}`,
+		`{"tools":[{"type":"web_search"}]}`, `{"n":2}`,
 	}
 	for _, fields := range invalid {
 		body := `{"model":"model-a","messages":[{"content":"Hello"}],` + fields[1:]
@@ -165,6 +165,181 @@ func TestSchemaNetworkAccessAndUnsupportedSemanticsRejectedBeforeSchool(t *testi
 	case job := <-sent:
 		t.Fatalf("Invalid request reached school %+v", job)
 	default:
+	}
+}
+
+func recordedRequest(s *Server, path, body string) <-chan *httptest.ResponseRecorder {
+	result := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		recorder := httptest.NewRecorder()
+		incoming := httptest.NewRequest("POST", "http://127.0.0.1"+path, strings.NewReader(body))
+		incoming.Header.Set("Authorization", "Bearer synthetic-local-key")
+		s.ServeHTTP(recorder, incoming)
+		result <- recorder
+	}()
+	return result
+}
+
+func chatChunks(t *testing.T, body string) []map[string]any {
+	t.Helper()
+	var chunks []map[string]any
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.HasPrefix(line, "data: ") || line == "data: [DONE]" {
+			continue
+		}
+		var chunk map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &chunk); err != nil {
+			t.Fatal(err)
+		}
+		if chunk["object"] == "chat.completion.chunk" {
+			chunks = append(chunks, chunk)
+		}
+	}
+	return chunks
+}
+
+func TestChatRequestedUsageRemainsUnknown(t *testing.T) {
+	for _, mode := range []string{"text", "tools", "truncated", "nonstream"} {
+		t.Run(mode, func(t *testing.T) {
+			s, _, sent := fixture(t, time.Second)
+			fields := `"stream":true`
+			if mode == "nonstream" {
+				fields = `"stream":false`
+			} else if mode == "tools" {
+				fields += `,"tools":[` + weatherTool + `]`
+			}
+			pending := recordedRequest(s, "/v1/chat/completions", `{"model":"model-a","messages":[{"content":"Hello"}],"stream_options":{"include_usage":true},`+fields+`}`)
+			job := take(t, sent)
+			switch mode {
+			case "tools":
+				completeText(t, s, job, weatherEnvelope)
+			case "truncated":
+				emit(t, s, job["job"].(string), "event", map[string]any{"type": "string", "data": "Partial"})
+				emit(t, s, job["job"].(string), "done", "The school stream ended before its completion marker")
+			default:
+				emit(t, s, job["job"].(string), "event", map[string]any{"type": "string", "reasoning_data": "Reason"})
+				completeText(t, s, job, "Answer")
+			}
+			got := <-pending
+			if got.Code != 200 || got.Header().Get("X-XIPU-Usage") != "unavailable" {
+				t.Fatalf("Usage compatibility failed: %d %v %s", got.Code, got.Header(), got.Body)
+			}
+			if mode == "nonstream" {
+				var body map[string]any
+				json.Unmarshal(got.Body.Bytes(), &body)
+				if value, ok := body["usage"]; !ok || value != nil {
+					t.Fatalf("Expected unknown usage: %s", got.Body)
+				}
+			} else {
+				chunks := chatChunks(t, got.Body.String())
+				if len(chunks) < 2 || strings.Count(got.Body.String(), "data: [DONE]\n") != 1 {
+					t.Fatalf("Invalid stream termination: %s", got.Body)
+				}
+				for _, chunk := range chunks {
+					if value, ok := chunk["usage"]; !ok || value != nil || len(chunk["choices"].([]any)) != 1 {
+						t.Fatalf("Fabricated or omitted usage: %+v", chunk)
+					}
+				}
+				last := chunks[len(chunks)-1]["choices"].([]any)[0].(map[string]any)
+				want := any("stop")
+				if mode == "tools" {
+					want = "tool_calls"
+				} else if mode == "truncated" {
+					want = nil
+					if !strings.Contains(got.Body.String(), "event: error\n") {
+						t.Fatal("Truncated stream lost its error")
+					}
+				}
+				if last["finish_reason"] != want {
+					t.Fatalf("Changed finish reason: %+v", last)
+				}
+			}
+			select {
+			case extra := <-sent:
+				t.Fatalf("Usage reporting caused another school request: %+v", extra)
+			default:
+			}
+		})
+	}
+}
+
+func TestChatUsageOptionsValidation(t *testing.T) {
+	for _, options := range []string{`null`, `{}`, `{"include_usage":null}`, `{"include_usage":false}`} {
+		s, _, sent := fixture(t, time.Second)
+		pending := recordedRequest(s, "/v1/chat/completions", `{"model":"model-a","messages":[{"content":"Hello"}],"stream":true,"stream_options":`+options+`}`)
+		completeText(t, s, take(t, sent), "Answer")
+		got := <-pending
+		if got.Code != 200 || got.Header().Get("X-XIPU-Usage") != "" || strings.Contains(got.Body.String(), `"usage"`) {
+			t.Fatalf("Unrequested usage changed stream: %s %s", options, got.Body)
+		}
+	}
+	s, _, sent := fixture(t, time.Second)
+	for _, options := range []string{`[]`, `true`, `"true"`, `{"unknown":false}`, `{"include_usage":1}`, `{"include_usage":"true"}`, `{"include_usage":[]}`, `{"include_usage":{}}`, `{"include_usage":true,"include_usage":false}`} {
+		got := <-recordedRequest(s, "/v1/chat/completions", `{"model":"model-a","messages":[{"content":"Hello"}],"stream":true,"stream_options":`+options+`}`)
+		if got.Code != 400 {
+			t.Fatalf("Invalid options accepted: %s %s", options, got.Body)
+		}
+	}
+	select {
+	case extra := <-sent:
+		t.Fatalf("Invalid options reached school: %+v", extra)
+	default:
+	}
+}
+
+func TestChatTokenLimitsAreValidatedCompatibilityFields(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		for _, limits := range []struct{ fields, ignored string }{
+			{`"max_tokens":null,"max_completion_tokens":null`, ""},
+			{`"max_tokens":1`, "max_tokens"},
+			{`"max_completion_tokens":9223372036854775807`, "max_completion_tokens"},
+			{`"max_tokens":1,"max_completion_tokens":1`, "max_tokens, max_completion_tokens"},
+		} {
+			s, _, sent := fixture(t, time.Second)
+			body := `{"model":"model-a","messages":[{"content":"Hello"}],"stream":false,` + limits.fields + `}`
+			if stream {
+				body = strings.Replace(body, `"stream":false`, `"stream":true`, 1)
+			}
+			pending := recordedRequest(s, "/v1/chat/completions", body)
+			job := take(t, sent)
+			assertTokenLimitsNotForwarded(t, job)
+			completeText(t, s, job, "An answer longer than the requested one-token hint")
+			got := <-pending
+			if got.Code != 200 || got.Header().Get("X-XIPU-Ignored-Parameters") != limits.ignored || !strings.Contains(got.Body.String(), "An answer longer") || strings.Contains(got.Body.String(), `"finish_reason":"length"`) {
+				t.Fatalf("Compatibility token limit changed result: %v %s", got.Header(), got.Body)
+			}
+		}
+	}
+	s, _, sent := fixture(t, time.Second)
+	for _, name := range []string{"max_tokens", "max_completion_tokens"} {
+		for _, value := range []string{`0`, `-1`, `1.5`, `1.0`, `true`, `"1"`, `[]`, `{}`, `9223372036854775808`} {
+			got := <-recordedRequest(s, "/v1/chat/completions", `{"model":"model-a","messages":[{"content":"Hello"}],"`+name+`":`+value+`}`)
+			if got.Code != 400 {
+				t.Fatalf("Invalid token limit accepted: %s=%s", name, value)
+			}
+		}
+	}
+	got := <-recordedRequest(s, "/v1/chat/completions", `{"model":"model-a","messages":[{"content":"Hello"}],"max_tokens":1,"max_completion_tokens":2}`)
+	if got.Code != 400 {
+		t.Fatal("Conflicting token limits accepted")
+	}
+	select {
+	case extra := <-sent:
+		t.Fatalf("Invalid token limit reached school: %+v", extra)
+	default:
+	}
+}
+
+func assertTokenLimitsNotForwarded(t *testing.T, job map[string]any) {
+	t.Helper()
+	payload := job["payload"].(map[string]any)
+	if payload["text"] != "Hello" {
+		t.Fatalf("Token limit modified prompt: %+v", payload)
+	}
+	for _, name := range []string{"max_tokens", "max_completion_tokens", "max_output_tokens"} {
+		if _, ok := payload[name]; ok {
+			t.Fatalf("Token limit forwarded to school: %s", name)
+		}
 	}
 }
 

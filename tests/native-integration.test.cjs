@@ -156,6 +156,38 @@ async function main() {
     const catalog = await fetch(base_url + '/models', { headers });
     assert.equal(catalog.status, 200);
     assert.equal((await catalog.json()).data[0].id, model);
+    // Compatibility fields must not change the school request.
+    const probes = [
+      ['/chat/completions', { model, messages: [{ role: 'user', content: 'hi' }], max_tokens: 16 }, 'max_tokens'],
+      ['/responses', { model, input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'hi' }] }], max_output_tokens: 16 }, 'max_output_tokens'],
+      ['/chat/completions', { model, messages: [{ role: 'user', content: 'hi' }], max_completion_tokens: 16, stream: true, stream_options: { include_usage: true } }, 'max_completion_tokens']
+    ];
+    for (const [endpoint, request, ignored] of probes) {
+      const before = calls.filter(call => call.url.endsWith('/api/chat/completions')).length;
+      const response = await fetch(base_url + endpoint, { method: 'POST', headers, body: JSON.stringify(request) });
+      assert.equal(response.status, 200, await response.clone().text());
+      assert.equal(response.headers.get('X-XIPU-Ignored-Parameters'), ignored);
+      assert.match(response.headers.get('Access-Control-Expose-Headers'), /X-XIPU-Ignored-Parameters/);
+      if (request.stream) {
+        assert.equal(response.headers.get('X-XIPU-Usage'), 'unavailable');
+        const text = await response.text();
+        assert.ok(text.endsWith('data: [DONE]\n\n'));
+        const frames = text.split('\n\n').filter(frame => frame.startsWith('data: {')).map(frame => JSON.parse(frame.slice(6)));
+        assert.ok(frames.some(frame => frame.choices[0].delta.content === 'INTEGRATION_OK'));
+        assert.ok(frames.every(frame => frame.usage === null && frame.choices.length === 1));
+        assert.equal(frames.at(-1).choices[0].finish_reason, 'stop');
+      } else {
+        const body = await response.json();
+        const text = endpoint === '/responses' ? body.output.find(item => item.type === 'message').content[0].text : body.choices[0].message.content;
+        assert.equal(text, 'INTEGRATION_OK');
+      }
+      const completions = calls.filter(call => call.url.endsWith('/api/chat/completions'));
+      assert.equal(completions.length, before + 1, 'probe generated more than once');
+      assert.equal(completions.at(-1).body.text, 'hi', 'compatibility fields changed the prompt');
+      for (const key of ['max_tokens', 'max_completion_tokens', 'max_output_tokens', 'stream_options']) {
+        assert.equal(completions.at(-1).body[key], undefined, key + ' reached the school');
+      }
+    }
     for (const stream of [false, true]) {
       const response = await fetch(base_url + '/chat/completions', { method: 'POST', headers, body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Reply INTEGRATION_OK' }], stream }) });
       assert.equal(response.status, 200);
@@ -281,7 +313,7 @@ async function main() {
     const [code] = await exited;
     assert.equal(code, 0, errorOutput);
     assert.equal(errorOutput, '');
-    console.log('native integration passed: real Go process, all extension worlds, chunked PNG upload, upload failure without retry, Responses JSON/SSE/vision, tool round trip, JSON Schema validation, settings/key rotation and clean EOF');
+    console.log('native integration passed: real Go process, all extension worlds, token-limit compatibility and unknown usage, chunked PNG upload, upload failure without retry, Responses JSON/SSE/vision, tool round trip, JSON Schema validation, settings/key rotation and clean EOF');
   } finally {
     clearTimeout(deadline);
     if (child.exitCode === null && child.signalCode === null) { const stopped = once(child, 'exit'); child.kill(); await stopped; }

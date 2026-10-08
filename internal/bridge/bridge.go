@@ -180,6 +180,7 @@ func loopbackHost(host string) bool {
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Expose-Headers", "X-XIPU-Ignored-Parameters, X-XIPU-Usage")
 	w.Header().Set("Cache-Control", "no-store")
 	if !loopbackHost(r.Host) {
 		apiError(w, 403, "invalid_host", "Use the loopback endpoint")

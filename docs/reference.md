@@ -99,7 +99,7 @@ Ordinary text streams immediately. Tool and structured-output responses are buff
 
 `POST /v1/responses` accepts text or message `input`, `instructions`, images, function definitions, and function call/result items. Use `store:false`; the client supplies conversation history. Responses SSE uses typed events with stable item IDs and sequence numbers, including completion and failure events.
 
-Response storage, `previous_response_id`, background jobs, response retrieval/deletion, WebSockets, hosted tools, and provider-specific encrypted reasoning state are unsupported. Raw school reasoning is available as Chat Completions `reasoning_content`; Responses do not include a reasoning summary. Request-specific temperature is rejected because the school conversation owns that setting. Unsupported request fields, including token limits, return an error. Token usage statistics are unavailable. The response `model` identifies the requested route, not independently verified model provenance.
+Response storage, `previous_response_id`, background jobs, response retrieval/deletion, WebSockets, hosted tools, and provider-specific encrypted reasoning state are unsupported. Raw school reasoning is available as Chat Completions `reasoning_content`; Responses do not include a reasoning summary. Request-specific temperature is rejected because the school conversation owns that setting. Unsupported request fields return an error. The response `model` identifies the requested route, not independently verified model provenance.
 
 ```sh
 curl http://127.0.0.1:8765/v1/responses \
@@ -109,6 +109,16 @@ curl http://127.0.0.1:8765/v1/responses \
 ```
 
 Only one school operation runs at a time. Busy requests fail without starting school work. Client disconnects and timeouts cancel active requests. Errors after SSE headers become structured error events without a successful stop. Missing school completion markers are treated as truncated responses. School requests are never automatically retried, including after HTTP 429. An already accepted generation may still be billed after cancellation.
+
+### Client compatibility
+
+Configure clients to use **OpenAI Chat Completions** or **Responses**. The Anthropic Messages API (`/v1/messages`) is not implemented and returns 404, even when the selected model is from Anthropic.
+
+Chat Completions accepts `max_tokens` and `max_completion_tokens`; Responses accepts `max_output_tokens`. Values must be positive integers or `null`. If both Chat fields are supplied with non-null values, they must agree. **These are accepted for client compatibility only: they do not limit generation length, reasoning, school points, or charges.** They are not forwarded to the school or added to the prompt. Responses to otherwise valid requests disclose supplied non-null limits in the `X-XIPU-Ignored-Parameters` header.
+
+Chat Completions accepts `stream_options: {"include_usage": true}` without rejecting the request. Every completion chunk then contains `usage: null`, and the response header is `X-XIPU-Usage: unavailable`. There is no final usage-only chunk with numeric totals. This supports clients that tolerate unknown usage; it does not provide full OpenAI usage accounting. Without this option, Chat Completions omits usage. Responses objects always have `usage: null`. The bridge does not estimate token totals or report them as zero. Clients may display unavailable usage as zero; those placeholders do not establish measured usage or the absence of charges.
+
+The school's **My Score** page reports account allowances and points used. Model prices express points per token quantity, but neither provides a reliable per-request breakdown of input, output, or reasoning tokens. These points cannot substitute for API token usage. Clients that require numeric usage or a guaranteed output budget are not fully supported.
 
 ## Security boundaries
 
@@ -133,7 +143,7 @@ Release builds use `CGO_ENABLED=0`, stripped debug information, and trimmed path
 
 The logo source is `design/logo/xipu-ai-bridge.svg`. Run `bridge-icons` to regenerate the extension assets with resvg; release builds also regenerate them automatically.
 
-Pinned Go libraries provide JSON Schema validation and WebP decoding; their licenses ship with release artifacts. See [third-party notices](../THIRD_PARTY_NOTICES.md). The extension styles include adaptations of coss-ui components; see [design provenance](coss-ui-provenance.md). Test coverage and platform validation are documented in [the verification record](verification.md).
+Pinned Go libraries provide JSON Schema validation and WebP decoding; their licenses ship with release artifacts. See [third-party notices](../THIRD_PARTY_NOTICES.md). The extension styles include adaptations of coss-ui components; see [design provenance](coss-ui-provenance.md). Test coverage and verification limits are documented in [the testing guide](verification.md).
 
 For a synthetic UI preview, run `node tests/popup-preview.cjs` or `node tests/options-preview.cjs` with the development Node runtime. These fixtures do not connect to the school or installed extension.
 

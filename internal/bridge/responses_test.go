@@ -137,7 +137,7 @@ func TestResponsesSchemaFailureAndUpstreamFailureNeverComplete(t *testing.T) {
 
 func TestResponsesRejectStateHostedToolsAndEmptyVisibleOutput(t *testing.T) {
 	s, host, sent := fixture(t, time.Second)
-	for _, fields := range []string{`"store":true`, `"previous_response_id":"resp_old"`, `"background":true`, `"include":["reasoning.encrypted_content"]`, `"conversation":"conv_old"`, `"tools":[{"type":"web_search"}]`, `"reasoning":{"summary":"auto"}`, `"max_output_tokens":5`, `"input":[{"type":"function_call_output","call_id":"unknown","output":"x"}]`} {
+	for _, fields := range []string{`"store":true`, `"previous_response_id":"resp_old"`, `"background":true`, `"include":["reasoning.encrypted_content"]`, `"conversation":"conv_old"`, `"tools":[{"type":"web_search"}]`, `"reasoning":{"summary":"auto"}`, `"input":[{"type":"function_call_output","call_id":"unknown","output":"x"}]`} {
 		prefix := `{"model":"model-a","input":"Hello",`
 		if strings.HasPrefix(fields, `"input"`) {
 			prefix = `{"model":"model-a",`
@@ -158,6 +158,55 @@ func TestResponsesRejectStateHostedToolsAndEmptyVisibleOutput(t *testing.T) {
 	emit(t, s, job["job"].(string), "done", nil)
 	if got := <-pending; got.status != 502 || !strings.Contains(got.body, "missing_result") {
 		t.Fatalf("Empty visible output accepted %+v", got)
+	}
+}
+
+func TestResponsesTokenLimitIsAValidatedCompatibilityField(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		for _, value := range []string{`null`, `1`, `9223372036854775807`} {
+			s, _, sent := fixture(t, time.Second)
+			body := `{"model":"model-a","input":"Hello","max_output_tokens":` + value + `,"stream":false}`
+			if stream {
+				body = strings.Replace(body, `"stream":false`, `"stream":true`, 1)
+			}
+			pending := recordedRequest(s, "/v1/responses", body)
+			job := take(t, sent)
+			assertTokenLimitsNotForwarded(t, job)
+			completeText(t, s, job, "An answer longer than the requested one-token hint")
+			got := <-pending
+			ignored := "max_output_tokens"
+			if value == "null" {
+				ignored = ""
+			}
+			if got.Code != 200 || got.Header().Get("X-XIPU-Ignored-Parameters") != ignored || !strings.Contains(got.Body.String(), "An answer longer") {
+				t.Fatalf("Compatibility token limit changed result: %v %s", got.Header(), got.Body)
+			}
+			var response map[string]any
+			if stream {
+				completed := findResponseEvent(responseEvents(t, got.Body.String()), "response.completed")
+				if completed == nil {
+					t.Fatal("Missing completed response")
+				}
+				response = completed["response"].(map[string]any)
+			} else if err := json.Unmarshal(got.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response["status"] != "completed" || response["incomplete_details"] != nil || response["usage"] != nil {
+				t.Fatalf("Invented token-limit semantics: %+v", response)
+			}
+		}
+	}
+	s, _, sent := fixture(t, time.Second)
+	for _, value := range []string{`0`, `-1`, `1.5`, `1.0`, `true`, `"1"`, `[]`, `{}`, `9223372036854775808`} {
+		got := <-recordedRequest(s, "/v1/responses", `{"model":"model-a","input":"Hello","max_output_tokens":`+value+`}`)
+		if got.Code != 400 {
+			t.Fatalf("Invalid token limit accepted: %s", value)
+		}
+	}
+	select {
+	case extra := <-sent:
+		t.Fatalf("Invalid token limit reached school: %+v", extra)
+	default:
 	}
 }
 

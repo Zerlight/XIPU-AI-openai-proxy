@@ -23,6 +23,7 @@ type responsesRequest struct {
 	Online       json.RawMessage   `json:"online"`
 	Include      []string          `json:"include"`
 	Truncation   string            `json:"truncation"`
+	MaxOutput    *int64            `json:"max_output_tokens"`
 }
 
 func responseMessages(input json.RawMessage, instructions string) ([]message, error) {
@@ -90,7 +91,12 @@ func responseMessages(input json.RawMessage, instructions string) ([]message, er
 }
 func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	var body responsesRequest
-	if err := readRequest(w, r, &body, "model", "input", "instructions", "stream", "store", "background", "previous_response_id", "tools", "tool_choice", "parallel_tool_calls", "text", "reasoning", "online", "include", "truncation"); err != nil {
+	if err := readRequest(w, r, &body, "model", "input", "instructions", "stream", "store", "background", "previous_response_id", "tools", "tool_choice", "parallel_tool_calls", "text", "reasoning", "online", "include", "truncation", "max_output_tokens"); err != nil {
+		apiError(w, 400, "invalid_request", err.Error())
+		return
+	}
+	ignored, err := ignoredTokenLimits(tokenLimit{"max_output_tokens", body.MaxOutput})
+	if err != nil {
 		apiError(w, 400, "invalid_request", err.Error())
 		return
 	}
@@ -135,6 +141,9 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	if err := generation.prepare(); err != nil {
 		apiError(w, 400, "invalid_request", err.Error())
 		return
+	}
+	if ignored != "" {
+		w.Header().Set("X-XIPU-Ignored-Parameters", ignored)
 	}
 	s.generate(w, r, generation, &responsesOutput{writer: w, parallel: tools.parallel})
 }
