@@ -5,6 +5,13 @@ cd "$(dirname "$0")/.."
 bash scripts/icons.sh
 mkdir -p dist/release
 release_dir="$(pwd)/dist/release"
+version="$(node -p 'require("./extension/manifest.json").version')"
+if [[ ! "$version" =~ ^[0-9]+(\.[0-9]+){0,3}$ ]]; then
+  printf 'Invalid extension version for packaging: %s\n' "$version" >&2
+  exit 1
+fi
+package_root="$(mktemp -d "${TMPDIR:-/tmp}/xipu-packages.XXXXXX")"
+trap 'rm -rf "$package_root"' EXIT
 artifacts=()
 for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 windows/arm64 windows/amd64; do
   target_os="${target%/*}"
@@ -13,6 +20,30 @@ for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 windows/arm64 wi
   if [[ "$target_os" == "windows" ]]; then filename+=".exe"; fi
   CGO_ENABLED=0 GOOS="$target_os" GOARCH="$target_arch" go build -trimpath -ldflags='-s -w' -o "$release_dir/$filename" ./cmd/xipu-bridge
   artifacts+=("$filename")
+
+  package_os="$target_os"
+  native_name=xipu-bridge
+  case "$target_os" in
+    darwin) package_os=macos; launcher=Install.command; archive_type=zip ;;
+    windows) native_name+=.exe; launcher=Install.cmd; archive_type=zip ;;
+    linux) launcher=install.sh; archive_type=tar.gz ;;
+  esac
+  package_name="xipu-ai-bridge_${version}_${package_os}_${target_arch}"
+  package_dir="$package_root/$package_name"
+  mkdir -p "$package_dir/licenses"
+  cp "$release_dir/$filename" "$package_dir/$native_name"
+  cp "packaging/$launcher" packaging/INSTALL.md LICENSE THIRD_PARTY_NOTICES.md "$package_dir/"
+  cp licenses/*.txt "$package_dir/licenses/"
+  chmod 755 "$package_dir/$native_name"
+  if [[ "$target_os" != windows ]]; then chmod 755 "$package_dir/$launcher"; fi
+  archive="$package_name.$archive_type"
+  rm -f "$release_dir/$archive"
+  if [[ "$archive_type" == zip ]]; then
+    (cd "$package_root" && zip -q -X -r "$release_dir/$archive" "$package_name")
+  else
+    COPYFILE_DISABLE=1 tar -czf "$release_dir/$archive" -C "$package_root" "$package_name"
+  fi
+  artifacts+=("$archive")
 done
 
 # Explicit inputs prevent developer config, credentials, or test transcripts

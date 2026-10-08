@@ -20,7 +20,7 @@ Date: October 8, 2026. Host: macOS ARM64. All API fixtures and UI preview data a
 
 ## Artifact sizes
 
-Build flags: `CGO_ENABLED=0`, `-trimpath`, `-ldflags='-s -w'`. Sizes are bytes for these local unsigned candidates; Go version and VCS metadata may affect later builds.
+Initial October 8 acceptance snapshot, before the branding assets and installation archives were added. Build flags: `CGO_ENABLED=0`, `-trimpath`, `-ldflags='-s -w'`. Sizes are bytes for those local unsigned candidates; Go version and VCS metadata may affect later builds.
 
 | Artifact | Bytes |
 | --- | ---: |
@@ -32,7 +32,24 @@ Build flags: `CGO_ENABLED=0`, `-trimpath`, `-ldflags='-s -w'`. Sizes are bytes f
 | xipu-bridge_windows_amd64.exe | 8,410,624 |
 | xipu-bridge_windows_arm64.exe | 7,668,736 |
 
-All twelve SHA256SUMS entries were verified. The extension archive contains exactly 15 allowed runtime/style/license files, including the select controller, coss-ui MIT notice, and CC0 legal text. Release artifacts include the project license, third-party notice, and full dependency licenses. The host remains a standalone executable; pinned JSON Schema and WebP libraries are compiled into it.
+All twelve SHA256SUMS entries in that snapshot were verified. That extension archive contained exactly 15 allowed runtime/style/license files, including the select controller, coss-ui MIT notice, and CC0 legal text. Release artifacts include the project license, third-party notice, and full dependency licenses. The host remains a standalone executable; pinned JSON Schema and WebP libraries are compiled into it.
+
+## Release package verification
+
+On October 9, the full repository checks and six-platform release build passed with the new logo and installation archives. Each versioned native archive includes a stable executable filename, a platform launcher, installation instructions, and licenses. All 18 local checksum entries passed verification. Package checks extracted all six archives into paths containing spaces and verified exact contents, source-file and binary byte equality, executable permissions, and absence of symlinks. POSIX launchers preserved quoted arguments and success/failure exit codes. The real macOS ARM64 executable completed a dry run against a canonical temporary home without writing configuration or browser registrations.
+
+| Installation archive | Bytes |
+| --- | ---: |
+| xipu-ai-bridge_0.1.0_macos_arm64.zip | 3,193,141 |
+| xipu-ai-bridge_0.1.0_macos_amd64.zip | 3,468,793 |
+| xipu-ai-bridge_0.1.0_linux_arm64.tar.gz | 3,094,453 |
+| xipu-ai-bridge_0.1.0_linux_amd64.tar.gz | 3,437,472 |
+| xipu-ai-bridge_0.1.0_windows_arm64.zip | 3,117,983 |
+| xipu-ai-bridge_0.1.0_windows_amd64.zip | 3,498,607 |
+
+The extension ZIP is 39,679 bytes and includes the new SVG plus five PNG icon sizes. The macOS executable has a Go linker ad hoc signature, with no Developer ID identity or team identifier. No Apple notarization or Windows Authenticode signing was performed.
+
+The release workflow's YAML and local asset-preparation step were checked, including rejection of a tag that differs from the extension version. These local checks did not exercise GitHub publication. Windows launcher execution is wired into Windows CI with an isolated profile and dry-run arguments; it has not run on this macOS host. Download quarantine, OS trust prompts, and fresh Windows/Linux browser installations still require platform acceptance testing.
 
 The image upload contract was checked against the school's public [Upload component](https://tosai.xjtlu.edu.cn/assets/assets/Upload-DmPRipa7.js) and saved frontend helpers. The page sends multipart `accept=image`, `file`, and `lang` to `/api/common/upload`, reads `data.url` or `data.file_url`, and passes the resulting ordered URL array as completion `files`. This is source evidence, not a live upload result.
 

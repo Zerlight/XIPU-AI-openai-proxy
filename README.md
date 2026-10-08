@@ -17,21 +17,30 @@ The native executable runs without an additional runtime.
 
 ## Install
 
-1. Choose the native binary for your operating system and CPU architecture from `dist/release/`. Alternatively, build `dist/xipu-bridge` with `devenv shell -- bridge-build`.
-2. Extract `dist/release/xipu-bridge-extension.zip` into a permanent folder. In Chrome, Edge, or Chromium's extension management page, enable **Developer mode**, choose **Load unpacked**, and select the extracted folder containing `manifest.json`. When working from source, you can load the repository's `extension/` folder instead. Keep the folder in place. The included public key fixes the extension ID as `eegmaembfjajhifjbddmdbppchinmmcg`.
-3. Register the native host. For the macOS ARM64 release binary, run this from the repository directory:
+Download a native package from [GitHub Releases](https://github.com/Zerlight/XIPU-AI-openai-proxy/releases) when a release is available. Choose the asset for your system, rather than GitHub's automatically generated source-code archive. Building locally produces the same packages under `dist/release/`.
 
-   ```sh
-   ./dist/release/xipu-bridge_darwin_arm64 install --browser chrome
-   ```
+| System | Release asset (`<version>` is the release number) | Install after extracting |
+| --- | --- | --- |
+| macOS, Apple silicon | `xipu-ai-bridge_<version>_macos_arm64.zip` | Double-click `Install.command` |
+| macOS, Intel | `xipu-ai-bridge_<version>_macos_amd64.zip` | Double-click `Install.command` |
+| Windows, Intel/AMD 64-bit | `xipu-ai-bridge_<version>_windows_amd64.zip` | Double-click `Install.cmd` |
+| Windows, ARM64 | `xipu-ai-bridge_<version>_windows_arm64.zip` | Double-click `Install.cmd` |
+| Linux, Intel/AMD 64-bit | `xipu-ai-bridge_<version>_linux_amd64.tar.gz` | Run `bash install.sh` |
+| Linux, ARM64 | `xipu-ai-bridge_<version>_linux_arm64.tar.gz` | Run `bash install.sh` |
 
-   Replace the executable path with your platform's binary, or `./dist/xipu-bridge` for a local build. The installer uses the official extension ID by default; custom builds with a different ID can pass `--extension-id YOUR_EXTENSION_ID`. Choose `--browser edge` or `--browser chromium` as appropriate. `--dry-run` describes the installation without writing files or registry entries. Installation is per user.
+1. Download and extract the native package. Each package includes the executable, installer launcher, `INSTALL.md`, and licenses. No language runtime or development tools are required.
+2. Run the launcher listed above to register for **Chrome**. Installation is per user; do not run it with `sudo` or as Administrator. The installer copies the executable to its permanent location, so you can remove the downloaded native package afterward. Close browsers before upgrading; saved settings and the local API key are preserved.
+3. Install the browser extension separately. Until the Chrome Web Store listing is published, download `xipu-bridge-extension.zip`, extract it into a permanent folder, then enable **Developer mode** in your browser's extension management page and choose **Load unpacked**. Select the folder containing `manifest.json` and keep it in place. Source checkouts can use `extension/`. The included public key fixes the extension ID as `eegmaembfjajhifjbddmdbppchinmmcg`; you do not need to enter an ID or school token.
 4. Sign in to XIPU AI in a browser tab. Refresh any school tab that was already open when you loaded the extension so its content scripts can connect. Create a dedicated conversation named **XIPU AI Bridge**, leave its system prompt empty, choose a model, and set **Context Count** to **0**.
 5. Open the extension popup, then **Settings**. Read the school's models and sessions, choose the dedicated session, and save. Copy the base URL and local API key into your client.
 
 The extension and native executable are separate installations under [Chrome's Native Messaging contract](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging). The manifest includes the Chrome Web Store public key so unpacked and store installations share the same ID. This public key is not a signing credential. See [Chrome's extension identity guidance](https://developer.chrome.com/docs/extensions/reference/manifest/key).
 
-The current release is an unsigned development package for unpacked loading. For normal Chrome installation on Windows and macOS without Developer mode, distribute the extension through the Chrome Web Store; self-hosted installation requires enterprise management. See [Chrome's distribution rules](https://developer.chrome.com/docs/extensions/how-to/distribute). A store item can be **Unlisted**, allowing installation through its store URL, but it still undergoes the same policy review as a public listing. See [store visibility and review requirements](https://developer.chrome.com/docs/webstore/cws-dashboard-distribution).
+For Edge or Chromium, open a terminal in the extracted native package and run `./xipu-bridge install --browser edge` or `--browser chromium` (`.\xipu-bridge.exe` on Windows). Launchers also forward these arguments. `--dry-run` describes installation without writing files or registry entries. Custom extension builds may pass `--extension-id YOUR_EXTENSION_ID`.
+
+Native packages currently lack Developer ID signing, Apple notarization, and Windows Authenticode signing, so operating-system security checks may prevent a downloaded executable from running. A signed Git commit is separate from executable signing. Smooth macOS distribution requires the [Developer ID and notarization workflow](https://developer.apple.com/developer-id/); the installation launchers do not change OS security settings.
+
+For normal Chrome installation on Windows and macOS without Developer mode, the extension must be distributed through the Chrome Web Store; self-hosted installation requires enterprise management. See [Chrome's distribution rules](https://developer.chrome.com/docs/extensions/how-to/distribute). A store item can be **Unlisted**, allowing installation through its store URL, but it still undergoes the same policy review as a public listing. See [store visibility and review requirements](https://developer.chrome.com/docs/webstore/cws-dashboard-distribution).
 
 The installer refuses to overwrite a registration belonging to a different executable. Remove a conflicting registration through its own installation procedure before installing this host.
 
@@ -140,7 +149,7 @@ bridge-release
 
 `devenv.lock` pins the toolchain inputs. Checks include formatting, vet, Go tests, the race detector on macOS/Linux, JavaScript syntax and behavior tests, and a real Go subprocess connected through all three extension worlds with synthetic school responses. `devenv test` runs the same checks.
 
-Release builds use `CGO_ENABLED=0`, stripped debug information, and trimmed paths. The release script produces macOS, Linux, and Windows binaries for ARM64 and x86-64, an allowlisted extension ZIP, and SHA256SUMS under `dist/release/`.
+Release builds use `CGO_ENABLED=0`, stripped debug information, and trimmed paths. The release script produces macOS, Linux, and Windows binaries and installation archives for ARM64 and x86-64, an allowlisted extension ZIP, and SHA256SUMS under `dist/release/`. Run `bash packaging/check.sh` inside the development shell to check the generated packages and installer launchers.
 
 The logo source is `design/logo/xipu-ai-bridge.svg`. Run `bridge-icons` to regenerate the extension assets with resvg; release builds also regenerate them automatically.
 
@@ -148,19 +157,25 @@ Pinned Go libraries provide JSON Schema validation and WebP decoding; their lice
 
 For a synthetic UI preview, run `node tests/popup-preview.cjs` or `node tests/options-preview.cjs` with the development Node runtime. These fixtures do not connect to the school or installed extension.
 
+## Publishing releases
+
+The GitHub workflow tests macOS, Linux, and Windows and checks the release packages. Pushing a `v<version>` tag publishes the six native installation archives, the extension ZIP, and a checksum file to GitHub Releases only after those jobs succeed. The tag must exactly match `extension/manifest.json` (for example, `v0.1.0`); ordinary branch pushes only produce CI artifacts. The release checksum file covers the downloadable assets, while the local build checksum file also covers raw binaries and license files.
+
+Configure a GitHub remote and push the code before creating the release tag. Release creation uses the workflow's repository token, with write access limited to the publishing job. It does not publish the browser extension to the Chrome Web Store or sign native executables.
+
 ## Platforms and release limits
 
 User-level registration supports Chrome, Edge, and Chromium on macOS, Linux, and Windows. Cross-compilation is not runtime validation; Windows/Linux browsers and macOS x86-64 still require hardware acceptance testing. Snap and Flatpak browser packages may need separate host integration. Firefox, mobile browsers, and ChromeOS are outside this version's scope.
 
-Use one active browser/profile for the host. Concurrent hosts compete for the configured port; the second host reports a bind error. Keep the selected school tab signed in. These binaries are unsigned release candidates, not store-published or notarized installers.
+Use one active browser/profile for the host. Concurrent hosts compete for the configured port; the second host reports a bind error. Keep the selected school tab signed in. The installation archives contain unsigned native binaries; packaging does not establish operating-system trust or store approval.
 
 ## Uninstall and troubleshooting
 
 ```sh
-./dist/release/xipu-bridge_darwin_arm64 uninstall --browser chrome
+./xipu-bridge uninstall --browser chrome
 ```
 
-Use the same platform binary as for installation, or `./dist/xipu-bridge` for a local build. Uninstall removes the selected browser registration and preserves the shared binary, configuration, and key. Remove the extension through the browser UI. Delete the `XIPU AI Bridge` configuration directory only after no browser uses it.
+Run this from the extracted native package; use `.\xipu-bridge.exe` on Windows, or `./dist/xipu-bridge` for a local build. Uninstall removes the selected browser registration and preserves the shared binary, configuration, and key. Remove the extension through the browser UI. Delete the `XIPU AI Bridge` configuration directory only after no browser uses it.
 
 | Symptom | Check |
 | --- | --- |

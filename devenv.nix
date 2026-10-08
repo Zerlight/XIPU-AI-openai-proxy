@@ -1,7 +1,7 @@
 { config, pkgs, ... }:
 {
   # Use standalone tools without additional language-server services.
-  packages = [ pkgs.go pkgs.nodejs pkgs.git pkgs.zip pkgs.coreutils pkgs.resvg ];
+  packages = [ pkgs.go pkgs.nodejs pkgs.git pkgs.zip pkgs.unzip pkgs.gnutar pkgs.gzip pkgs.coreutils pkgs.resvg ];
   env.GOTOOLCHAIN = "local";
   env.GOPATH = "${config.env.DEVENV_STATE}/go";
   env.GOCACHE = "${config.env.DEVENV_STATE}/go-build";
