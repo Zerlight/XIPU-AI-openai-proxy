@@ -1,0 +1,5 @@
+# Keep source and shell scripts consistent across operating systems.
+* text=auto eol=lf
+
+# Windows command launchers use their native line endings.
+*.cmd text eol=crlf
