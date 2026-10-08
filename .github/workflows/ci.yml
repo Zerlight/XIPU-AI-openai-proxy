@@ -1,0 +1,57 @@
+name: Test and build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  devenv:
+    name: devenv (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: cachix/install-nix-action@v31
+      - uses: cachix/cachix-action@v16
+        with:
+          name: devenv
+      - name: Install devenv
+        run: nix profile add nixpkgs#devenv
+      - name: Check
+        run: devenv test
+      - name: Build native binary
+        run: devenv shell -- bridge-build
+      - name: Cross-build unsigned release candidates
+        if: matrix.os == 'ubuntu-latest'
+        run: devenv shell -- bridge-release
+      - uses: actions/upload-artifact@v4
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          name: unsigned-release-candidates
+          path: dist/release/
+          if-no-files-found: error
+
+  windows:
+    # Nix/devenv on Windows requires WSL. Test the native Windows host directly.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check and build
+        shell: bash
+        run: |
+          bash scripts/check.sh
+          bash scripts/build.sh

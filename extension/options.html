@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Settings · XIPU AI Bridge</title>
+  <link rel="icon" type="image/svg+xml" href="icons/bridge.svg">
+  <link rel="stylesheet" href="styles/coss.css">
+  <link rel="stylesheet" href="styles/options.css">
+</head>
+<body>
+  <main>
+    <header class="page-header">
+      <div><p class="brand"><svg viewBox="0 0 32 32" fill="currentColor" aria-hidden="true" focusable="false"><path d="M2 21h3.5l4.65-10.63A4 4 0 0 1 13.81 8h4.38a4 4 0 0 1 3.66 2.37L26.5 21H30v5h-6.77l-5.69-13h-3.08L8.77 26H2z"/></svg>XIPU AI Bridge</p><h1>Settings</h1><p class="description">Preferences for this computer.</p></div>
+      <div class="connection-state"><span id="status" data-slot="badge" data-variant="secondary" role="status">Connecting</span><button id="reconnect" data-slot="button" data-variant="outline" type="button">Reconnect</button></div>
+    </header>
+    <div id="error" data-slot="alert" data-variant="error" role="alert" hidden></div>
+    <div id="notice" data-slot="alert" role="status" aria-live="polite" hidden></div>
+    <div id="restart" data-slot="alert" data-variant="warning" role="status" hidden><span>Restart the bridge to apply the saved port, then update your client’s base URL.</span><button id="restart-now" data-slot="button" data-variant="outline" type="button">Restart bridge</button></div>
+
+    <div class="settings-layout">
+      <nav class="settings-nav" aria-label="Settings sections">
+        <div id="settings-tabs" class="settings-tabs" role="tablist" aria-label="Settings" aria-orientation="vertical">
+          <button id="tab-general" type="button" role="tab" aria-selected="true" aria-controls="panel-general" tabindex="0">General</button>
+          <button id="tab-connection" type="button" role="tab" aria-selected="false" aria-controls="panel-connection" tabindex="-1">Connection</button>
+          <button id="tab-advanced" type="button" role="tab" aria-selected="false" aria-controls="panel-advanced" tabindex="-1">Advanced</button>
+        </div>
+      </nav>
+
+      <div class="settings-content">
+        <form id="settings-form" novalidate>
+          <fieldset id="native-settings" disabled>
+            <legend class="sr-only">Native app settings</legend>
+
+            <section id="panel-general" role="tabpanel" aria-labelledby="tab-general" tabindex="0">
+              <div data-slot="frame" class="settings-frame">
+                <header data-slot="frame-panel-header"><h2 data-slot="frame-panel-title">Model &amp; session</h2><p data-slot="frame-panel-description">Use a dedicated conversation with context count set to 0.</p></header>
+                <div data-slot="frame-panel">
+                  <div class="setting-row">
+                    <div class="setting-label"><label for="session_name">Session name</label><p class="description" id="session-help">Match exactly one conversation in XIPU AI.</p></div>
+                    <div class="setting-control"><span data-slot="input-control"><input id="session_name" data-slot="input" type="text" value="XIPU AI Bridge" maxlength="200" required aria-describedby="session-help"></span></div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label"><label for="default_model">Default model</label><p class="description" id="model-help">Used when your client omits a model.</p></div>
+                    <div class="setting-control"><span data-slot="input-control"><input id="default_model" data-slot="input" type="text" list="model-catalog" placeholder="Let the client choose" maxlength="200" spellcheck="false" aria-describedby="model-help"></span><datalist id="model-catalog"></datalist></div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label"><h3>Find a session</h3><p class="description">Read sessions and models from your signed-in tab.</p></div>
+                    <div class="setting-control"><button id="inspect" data-slot="button" data-variant="outline" type="button">Load from XIPU AI</button></div>
+                  </div>
+                  <div id="discovery-results" class="discovery-results" hidden>
+                    <div class="setting-row">
+                      <div class="setting-label"><label id="school-session-label" for="school-session">Available sessions</label></div>
+                      <div class="setting-control control-stack"><span data-slot="select"><button id="school-session" data-slot="select-trigger" type="button" value="" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-labelledby="school-session-label" aria-describedby="discovery-info">Choose a session</button></span><button id="use-session" data-slot="button" data-variant="outline" type="button" disabled>Use session</button></div>
+                    </div>
+                    <p id="discovery-info" class="description panel-note"></p>
+                  </div>
+                </div>
+                <p data-slot="frame-panel-footer" class="description">Your client’s model must match the selected school session.</p>
+              </div>
+
+              <div data-slot="frame" class="settings-frame">
+                <header data-slot="frame-panel-header"><h2 data-slot="frame-panel-title">Responses</h2><p data-slot="frame-panel-description">Defaults for requests that omit these options.</p></header>
+                <div data-slot="frame-panel">
+                  <div class="setting-row">
+                    <div class="setting-label"><label id="thinking-label" for="thinking">Thinking effort</label></div>
+                    <div class="setting-control"><span data-slot="select" class="select-control"><button id="thinking" data-slot="select-trigger" type="button" value="minimal" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-labelledby="thinking-label">Minimal</button></span></div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label"><label for="online">Online search</label><p class="description" id="online-help">Allow the model to search online.</p></div>
+                    <div class="setting-control"><label data-slot="switch"><input id="online" type="checkbox" role="switch" aria-describedby="online-help"><span data-slot="switch-thumb" aria-hidden="true"></span></label></div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label"><label for="include_reasoning">Include reasoning</label><p class="description" id="reasoning-help">Show reasoning in API responses. Hiding it does not disable thinking or reduce usage.</p></div>
+                    <div class="setting-control"><label data-slot="switch"><input id="include_reasoning" type="checkbox" role="switch" checked aria-describedby="reasoning-help"><span data-slot="switch-thumb" aria-hidden="true"></span></label></div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section id="panel-connection" role="tabpanel" aria-labelledby="tab-connection" tabindex="0" hidden>
+              <div data-slot="frame" class="settings-frame">
+                <header data-slot="frame-panel-header"><h2 data-slot="frame-panel-title">Client connection</h2><p data-slot="frame-panel-description">Use these details in your OpenAI-compatible client.</p></header>
+                <div data-slot="frame-panel">
+                  <div class="setting-row">
+                    <div class="setting-label"><label for="base-url">Active base URL</label></div>
+                    <div class="setting-control control-row"><span data-slot="input-control"><input id="base-url" data-slot="input" class="mono" type="text" readonly spellcheck="false" placeholder="Available when connected"></span><button id="copy-url" data-slot="button" data-variant="outline" data-size="icon" type="button" aria-label="Copy base URL" title="Copy base URL"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg></button></div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label"><label for="api-key">API key</label><p class="description" id="key-help">For local clients. Your school token stays in the browser.</p></div>
+                    <div class="setting-control control-stack"><span data-slot="input-control"><input id="api-key" data-slot="input" class="mono" type="password" readonly autocomplete="off" spellcheck="false" placeholder="Available when connected" aria-describedby="key-help"></span><div class="button-row"><button id="show-key" data-slot="button" data-variant="outline" type="button" aria-pressed="false">Show</button><button id="copy-key" data-slot="button" data-variant="outline" type="button">Copy key</button></div></div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label"><label for="port">Local port</label><p class="description" id="port-help">Changes apply after restarting the bridge.</p></div>
+                    <div class="setting-control"><span data-slot="input-control" class="number-control"><input id="port" data-slot="input" type="number" min="1" max="65535" step="1" value="8765" aria-describedby="port-help"></span></div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label"><h3>Replace API key</h3><p class="description">Update every client after replacement.</p></div>
+                    <div class="setting-control"><button id="rotate-key" data-slot="button" data-variant="outline" type="button">Replace API key</button></div>
+                  </div>
+                  <div id="rotate-confirm" data-slot="alert" data-variant="warning" class="inset-alert" hidden><h3>Replace your API key?</h3><p>The current key will stop working. Copy the new key into every connected client.</p><div class="button-row"><button id="cancel-rotate" data-slot="button" data-variant="outline" type="button">Cancel</button><button id="confirm-rotate" data-slot="button" type="button">Replace key</button></div></div>
+                </div>
+              </div>
+            </section>
+
+            <section id="panel-advanced" role="tabpanel" aria-labelledby="tab-advanced" tabindex="0" hidden>
+              <div data-slot="frame" class="settings-frame">
+                <header data-slot="frame-panel-header"><h2 data-slot="frame-panel-title">Timeouts</h2><p data-slot="frame-panel-description">Timed-out requests are cancelled, never retried.</p></header>
+                <div data-slot="frame-panel">
+                  <div class="setting-row">
+                    <div class="setting-label"><label for="chat_timeout_seconds">Chat timeout</label><p class="description" id="chat-timeout-help">Maximum completion duration. 10–1,800 seconds.</p></div>
+                    <div class="setting-control number-unit"><span data-slot="input-control" class="number-control"><input id="chat_timeout_seconds" data-slot="input" type="number" min="10" max="1800" step="1" value="300" aria-describedby="chat-timeout-help"></span><span class="description">seconds</span></div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label"><label for="model_timeout_seconds">Model list timeout</label><p class="description" id="model-timeout-help">Maximum wait for the catalog. 5–120 seconds.</p></div>
+                    <div class="setting-control number-unit"><span data-slot="input-control" class="number-control"><input id="model_timeout_seconds" data-slot="input" type="number" min="5" max="120" step="1" value="30" aria-describedby="model-timeout-help"></span><span class="description">seconds</span></div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label"><label for="idle_timeout_seconds">Idle timeout</label><p class="description" id="idle-timeout-help">Maximum silence. 5–600 seconds, no longer than chat timeout.</p></div>
+                    <div class="setting-control number-unit"><span data-slot="input-control" class="number-control"><input id="idle_timeout_seconds" data-slot="input" type="number" min="5" max="600" step="1" value="90" aria-describedby="idle-timeout-help"></span><span class="description">seconds</span></div>
+                  </div>
+                </div>
+              </div>
+              <div data-slot="frame" class="settings-frame">
+                <div data-slot="frame-panel"><div class="setting-row"><div class="setting-label"><h2 class="row-title">Reset defaults</h2><p class="description">Load defaults into the form. Save to apply.</p></div><div class="setting-control"><button id="reset" data-slot="button" data-variant="outline" type="button" disabled>Reset defaults</button></div></div></div>
+              </div>
+            </section>
+          </fieldset>
+
+          <section id="appearance" data-slot="frame" class="settings-frame" aria-labelledby="appearance-title">
+            <div data-slot="frame-panel"><div class="setting-row"><div class="setting-label"><h2 id="appearance-title" class="row-title">Appearance</h2><p class="description">Popup and settings. Saved immediately.</p></div><div class="setting-control"><label id="theme-label" for="theme" class="sr-only">Theme</label><span data-slot="select" class="select-control"><button id="theme" data-slot="select-trigger" type="button" value="system" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-labelledby="theme-label">System</button></span></div></div></div>
+          </section>
+          <div class="save-bar"><p id="save-state" role="status" aria-live="polite">Connecting to the native app…</p><div class="button-row"><button id="reload" data-slot="button" data-variant="outline" type="button">Reload saved</button><button id="save" data-slot="button" type="submit" disabled>Save changes</button></div></div>
+        </form>
+        <footer><span>Keep XIPU AI signed in.</span><span>Extension ID <code id="extension-id"></code></span></footer>
+      </div>
+    </div>
+  </main>
+  <script src="ui-controls.js"></script>
+  <script src="ui-settings.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>

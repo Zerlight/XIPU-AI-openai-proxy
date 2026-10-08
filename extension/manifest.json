@@ -1,0 +1,62 @@
+{
+  "manifest_version": 3,
+  "name": "XIPU AI Bridge",
+  "version": "0.1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqBAmAUN4sQgExy70AHzHvKlEy/+mdsCShjWawp918uCd1k6AKUaKI4MckVBmDroa7HFUy7KzwhefoPJ5bjYErORShwjcMh43fLRz6PTVH6pKY8Yo3nd24rw+1qFZ+UMTe5U0d7RjoUJqrPy4jfOxbOtgCjuUQ5+KomVEdvIHccuwDWeFqM2oWxbZq4UnC9hFQ1nL/mRzg6S08B2zCo4Ne03DUs1dKwv9DgehelZIZ2Qa8rpt3cPcFgjtG6tgpo0PifpugjTPsoJE/hy07j7dKMmAOImGDI+F5CfIA54IHoviCYd9GChduztwDeJ/ZdkoqCaPUIO0SWm5Mc//w2vihwIDAQAB",
+  "description": "Relay the logged-in XIPU AI tab to a local OpenAI-compatible endpoint.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": [
+    "storage",
+    "nativeMessaging"
+  ],
+  "host_permissions": [
+    "https://xipuai.xjtlu.edu.cn/*",
+    "https://xipuai-xjtlu-edu-cn-s.xjtlu.edu.cn/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "24": "icons/icon-24.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    },
+    "default_title": "XIPU AI Bridge",
+    "default_popup": "popup.html"
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://xipuai.xjtlu.edu.cn/*",
+        "https://xipuai-xjtlu-edu-cn-s.xjtlu.edu.cn/*"
+      ],
+      "js": [
+        "page.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://xipuai.xjtlu.edu.cn/*",
+        "https://xipuai-xjtlu-edu-cn-s.xjtlu.edu.cn/*"
+      ],
+      "js": [
+        "bridge.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "minimum_chrome_version": "111"
+}

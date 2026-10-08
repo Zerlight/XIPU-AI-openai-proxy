@@ -1,0 +1,14 @@
+/.devenv/
+/.direnv/
+/.cache/
+/dist/
+/result
+/result-*
+/.env
+/.env.*
+!.envrc
+api-key.txt
+config.json
+*.log
+.DS_Store
+/coverage.out

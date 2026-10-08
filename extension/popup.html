@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>XIPU AI Bridge</title>
+  <link rel="icon" type="image/svg+xml" href="icons/bridge.svg">
+  <link rel="stylesheet" href="styles/coss.css">
+  <link rel="stylesheet" href="styles/popup.css">
+</head>
+<body>
+  <main>
+    <header class="app-header">
+      <div class="app-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" fill="currentColor" focusable="false"><path d="M2 21h3.5l4.65-10.63A4 4 0 0 1 13.81 8h4.38a4 4 0 0 1 3.66 2.37L26.5 21H30v5h-6.77l-5.69-13h-3.08L8.77 26H2z"/></svg>
+      </div>
+      <div><h1>XIPU AI Bridge</h1><p class="subtitle">Your local AI connection</p></div>
+      <button id="settings" class="settings-button" data-slot="button" data-variant="outline" data-size="icon" type="button" aria-label="Open settings" title="Open settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 17h16"/><rect x="7" y="4" width="4" height="6" rx="1" fill="var(--background)"/><rect x="14" y="14" width="4" height="6" rx="1" fill="var(--background)"/></svg>
+      </button>
+    </header>
+
+    <section data-slot="card" aria-labelledby="connection-heading">
+      <div class="card-content">
+        <div class="section-heading">
+          <h2 id="connection-heading" class="sr-only">Connection</h2>
+          <span id="status" data-slot="badge" data-variant="secondary" role="status" aria-live="polite">Checking</span>
+          <button id="retry" data-slot="button" data-variant="outline" type="button" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6 7a7 7 0 0 1 11.5-1L20 9M4 15l2.5 3A7 7 0 0 0 18 17"/></svg>
+          Reconnect
+          </button>
+        </div>
+        <p id="status-detail" class="description">Reading bridge status…</p>
+        <div id="error" data-slot="alert" data-variant="error" role="alert" hidden></div>
+      </div>
+    </section>
+
+    <section data-slot="card" aria-labelledby="client-heading">
+      <div class="card-content">
+        <h2 id="client-heading">Connect your client</h2>
+        <div class="field">
+          <label for="endpoint">Base URL</label>
+          <div class="control-row">
+            <span data-slot="input-control"><input id="endpoint" data-slot="input" type="text" value="http://127.0.0.1:8765/v1" readonly spellcheck="false"></span>
+            <button id="copy-url" data-slot="button" data-variant="outline" data-size="icon" type="button" aria-label="Copy base URL" title="Copy base URL">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="field">
+          <label for="key">API key <span class="label-note">Local client only</span></label>
+          <div class="control-row">
+            <span data-slot="input-control"><input id="key" data-slot="input" type="password" placeholder="Available when connected" readonly autocomplete="off" spellcheck="false"></span>
+            <button id="reveal" data-slot="button" data-variant="outline" data-size="icon" type="button" aria-label="Show API key" aria-pressed="false" title="Show API key" disabled>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+            <button id="copy" data-slot="button" data-variant="outline" data-size="icon" type="button" aria-label="Copy API key" title="Copy API key" disabled>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg>
+            </button>
+          </div>
+        </div>
+        <p id="feedback" class="feedback" role="status" aria-live="polite"></p>
+      </div>
+    </section>
+
+    <section class="session" aria-labelledby="session-heading">
+      <h2 id="session-heading">Dedicated session</h2>
+      <p id="session">Waiting for the native app</p>
+      <p class="description">Choose the same model in XIPU AI and your client. Set the session’s context count to 0.</p>
+    </section>
+
+    <footer>
+      <details>
+        <summary>Connection details</summary>
+        <dl><dt>Transport</dt><dd id="transport">Native Messaging</dd><dt>Extension ID</dt><dd><code id="extension-id"></code></dd></dl>
+      </details>
+      <p class="privacy-note">Your school token stays in the browser.</p>
+    </footer>
+  </main>
+  <script src="ui-settings.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

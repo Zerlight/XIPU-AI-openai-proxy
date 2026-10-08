@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 32 32" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">XIPU AI Bridge</title>
+  <desc id="desc">A single raised span connecting two solid bridge supports.</desc>
+  <path fill="#242424" d="M2 21h3.5l4.65-10.63A4 4 0 0 1 13.81 8h4.38a4 4 0 0 1 3.66 2.37L26.5 21H30v5h-6.77l-5.69-13h-3.08L8.77 26H2z"/>
+</svg>
