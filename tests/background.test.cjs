@@ -16,7 +16,7 @@ const chrome = {
   runtime: { id, getURL: file => `chrome-extension://${id}/${file}`,
     onConnect: event(), onMessage: event(), onStartup: event(), onInstalled: event(),
     connectNative(host) { assert.equal(host, 'edu.xjtlu.xipu_bridge'); const p = port(); natives.push(p); return p; } },
-  storage: { local: { set(x) { Object.assign(stored, x); },
+  storage: { local: { get: async () => ({ ...stored }), set(x) { Object.assign(stored, x); },
     setAccessLevel(x) { assert.equal(x.accessLevel, 'TRUSTED_CONTEXTS'); return Promise.resolve(); } } }
 };
 vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../extension/background.js'), 'utf8'), {

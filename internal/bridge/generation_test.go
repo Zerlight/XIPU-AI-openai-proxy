@@ -215,7 +215,7 @@ func TestChatRequestedUsageRemainsUnknown(t *testing.T) {
 				completeText(t, s, job, weatherEnvelope)
 			case "truncated":
 				emit(t, s, job["job"].(string), "event", map[string]any{"type": "string", "data": "Partial"})
-				emit(t, s, job["job"].(string), "done", "The school stream ended before its completion marker")
+				emit(t, s, job["job"].(string), "done", "The school stream ended with an incomplete SSE event")
 			default:
 				emit(t, s, job["job"].(string), "event", map[string]any{"type": "string", "reasoning_data": "Reason"})
 				completeText(t, s, job, "Answer")

@@ -7,13 +7,14 @@
   <title>Settings · XIPU AI Bridge</title>
   <link rel="icon" type="image/svg+xml" href="icons/bridge.svg">
   <link rel="stylesheet" href="styles/coss.css">
+  <link rel="stylesheet" href="styles/brand.css">
   <link rel="stylesheet" href="styles/options.css">
 </head>
 <body>
   <main>
     <header class="page-header">
-      <div><p class="brand"><svg viewBox="0 0 32 32" fill="currentColor" aria-hidden="true" focusable="false"><path d="M2 21h3.5l4.65-10.63A4 4 0 0 1 13.81 8h4.38a4 4 0 0 1 3.66 2.37L26.5 21H30v5h-6.77l-5.69-13h-3.08L8.77 26H2z"/></svg>XIPU AI Bridge</p><h1>Settings</h1><p class="description">Preferences for this computer.</p></div>
-      <div class="connection-state"><span id="status" data-slot="badge" data-variant="secondary" role="status">Connecting</span><button id="reconnect" data-slot="button" data-variant="outline" type="button">Reconnect</button></div>
+      <div><p class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="currentColor" focusable="false"><path d="M2 21h3.5l4.65-10.63A4 4 0 0 1 13.81 8h4.38a4 4 0 0 1 3.66 2.37L26.5 21H30v5h-6.77l-5.69-13h-3.08L8.77 26H2z"/></svg></span><span class="brand-title">XIPU AI Bridge</span></p><h1>Settings</h1><p class="description">Preferences for this computer.</p></div>
+      <div class="connection-state"><button id="setup" data-slot="button" data-variant="outline" type="button">Setup</button><span id="status" data-slot="badge" data-variant="secondary" role="status">Connecting</span><button id="reconnect" data-slot="button" data-variant="outline" type="button">Reconnect</button></div>
     </header>
     <div id="error" data-slot="alert" data-variant="error" role="alert" hidden></div>
     <div id="notice" data-slot="alert" role="status" aria-live="polite" hidden></div>
@@ -61,7 +62,7 @@
               </div>
 
               <div data-slot="frame" class="settings-frame">
-                <header data-slot="frame-panel-header"><h2 data-slot="frame-panel-title">Responses</h2><p data-slot="frame-panel-description">Defaults for requests that omit these options.</p></header>
+                <header data-slot="frame-panel-header"><h2 data-slot="frame-panel-title">Responses</h2><p data-slot="frame-panel-description">Request defaults and response preferences.</p></header>
                 <div data-slot="frame-panel">
                   <div class="setting-row">
                     <div class="setting-label"><label id="thinking-label" for="thinking">Thinking effort</label></div>
@@ -74,6 +75,10 @@
                   <div class="setting-row">
                     <div class="setting-label"><label for="include_reasoning">Include reasoning</label><p class="description" id="reasoning-help">Show reasoning in API responses. Hiding it does not disable thinking or reduce usage.</p></div>
                     <div class="setting-control"><label data-slot="switch"><input id="include_reasoning" type="checkbox" role="switch" checked aria-describedby="reasoning-help"><span data-slot="switch-thumb" aria-hidden="true"></span></label></div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label"><label for="omit_historical_images">Text-only image history</label><p class="description" id="image-history-help">Omit images from earlier answered turns. Keep their existing text descriptions. New images are still sent and require image support.</p></div>
+                    <div class="setting-control"><label data-slot="switch"><input id="omit_historical_images" type="checkbox" role="switch" aria-describedby="image-history-help"><span data-slot="switch-thumb" aria-hidden="true"></span></label></div>
                   </div>
                 </div>
               </div>

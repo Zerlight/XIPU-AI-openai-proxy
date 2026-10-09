@@ -16,15 +16,16 @@ import (
 )
 
 type Settings struct {
-	SessionName         string `json:"session_name"`
-	Port                int    `json:"port"`
-	DefaultModel        string `json:"default_model"`
-	Thinking            string `json:"thinking"`
-	Online              bool   `json:"online"`
-	ChatTimeoutSeconds  int    `json:"chat_timeout_seconds"`
-	ModelTimeoutSeconds int    `json:"model_timeout_seconds"`
-	IdleTimeoutSeconds  int    `json:"idle_timeout_seconds"`
-	IncludeReasoning    bool   `json:"include_reasoning"`
+	SessionName          string `json:"session_name"`
+	Port                 int    `json:"port"`
+	DefaultModel         string `json:"default_model"`
+	Thinking             string `json:"thinking"`
+	Online               bool   `json:"online"`
+	ChatTimeoutSeconds   int    `json:"chat_timeout_seconds"`
+	ModelTimeoutSeconds  int    `json:"model_timeout_seconds"`
+	IdleTimeoutSeconds   int    `json:"idle_timeout_seconds"`
+	IncludeReasoning     bool   `json:"include_reasoning"`
+	OmitHistoricalImages bool   `json:"omit_historical_images"`
 }
 
 type Config struct {

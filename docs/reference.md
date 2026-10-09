@@ -26,7 +26,7 @@ The installer refuses to overwrite a registration belonging to a different execu
 
 ## Settings
 
-The popup shows connection status and client credentials. The full settings page opens in its own tab, grouped into General, Connection, and Advanced. Keyboard navigation and validation keep the relevant section accessible without discarding unsaved edits. It offers:
+After onboarding, the popup shows connection status and client credentials. The full settings page opens in its own tab, grouped into General, Connection, and Advanced. Keyboard navigation and validation keep the relevant section accessible without discarding unsaved edits. It offers:
 
 | Setting | Default | Behavior |
 | --- | --- | --- |
@@ -36,6 +36,7 @@ The popup shows connection status and client credentials. The full settings page
 | Thinking effort | minimal | Default for requests without `thinking` or `reasoning_effort` |
 | Online search | Off | Default for requests without `online` |
 | Include reasoning | On | Include `reasoning_content` in client responses |
+| Text-only image history | Off | Omit images from earlier answered turns; keep existing descriptions and send current images normally |
 | Chat timeout | 300 seconds | Total time allowed for a completion; 10–1800 seconds |
 | Catalog timeout | 30 seconds | Time allowed for the API model list; 5–120 seconds |
 | Idle timeout | 90 seconds | Maximum gap between school events; 5–600 seconds and no longer than the chat timeout |
@@ -51,13 +52,27 @@ Appearance is stored in extension storage. Host settings and the local key live 
 
 ## Models and session isolation
 
+### First-run setup
+
+The first toolbar opening shows a welcome screen. Choose **Start setup** to open the guide in a new tab; it can also be reopened through **Setup** in the dashboard or Settings. It checks the native connection and signed-in tab, loads available models, and lets you create a dedicated conversation with a unique name. Creation is an explicit action; opening the extension does not create a conversation or generate a response.
+
+For a previously configured connection, **Use existing setup** skips the guide and opens the dashboard. This choice does not verify or change the school conversation. Existing conversations can be selected through Settings.
+
+Setup first creates the conversation using its name, then configures its chosen model, Context Count 0, and empty system prompt. It verifies the saved identity and settings before saving the local session name and default model. Other native settings remain unchanged. Existing conversations with the same name are never overwritten.
+
+Interrupted setup retains minimal progress in trusted extension storage. The welcome screen offers **Continue setup** or **Review setup** to reopen the guide. If the new conversation ID is known, **Resume setup** continues configuration without creating another conversation. If only the local save failed, resuming repeats that local save.
+
+After a school error or timeout, **Refresh** reads local connection status without contacting the school. **Check setup** makes an explicit, read-only check for the conversation and recovers its identity and configuration when possible. **Stop waiting** cancels the pending setup operation; a school change may already have completed. Setup never automatically retries an uncertain creation, including after HTTP 502. If the conversation is not visible yet, check again later or select an existing dedicated conversation in Settings. Successfully saving Settings exits onboarding; the bridge validates that conversation on the next API request. The school API has no confirmed idempotency mechanism, so concurrent creation from another browser or client cannot be excluded.
+
+### Existing conversations
+
 Reading the school's catalog and sessions does not generate a response or change school settings. Discovery returns only model/session display metadata, never the school token or chat history. Select a session and click **Use session** to fill its name and default model in the local form, then **Save changes** to apply them. This does not change the school conversation. Unsafe or ambiguous sessions cannot be selected.
 
 An explicit API `model` always takes precedence over the configured default. Before generation, the bridge reads the selected school conversation and requires its Context Count to be 0. If the model differs, it updates that conversation's model while preserving its other settings, then verifies the saved model, unchanged session ID, and Context Count 0 before sending a completion. A failed update or verification stops the request.
 
 Model changes persist. Failure or cancellation after an update can leave the new model selected; the bridge does not roll back changes or retry automatically. Reserve the selected conversation exclusively for the bridge, and do not manually edit it or send messages there while a request is active.
 
-The bridge never creates, clears, or deletes school conversations. Responses remain visible in the dedicated conversation. With Context Count 0, each request supplies the client's complete transcript as text. School-side prompt and generation settings still apply.
+Only the explicit Setup action creates a school conversation. Ordinary API requests never create, clear, or delete conversations. Responses remain visible in the dedicated conversation. With Context Count 0, each request supplies the client's complete transcript as text. School-side prompt and generation settings still apply.
 
 ## API
 
@@ -83,7 +98,11 @@ One user message becomes plain text. Multiple messages become a transcript with 
 
 Use Chat Completions `image_url` content parts or Responses `input_image` parts. Supply a base64 data URL or a public HTTPS image URL. Remote images are downloaded without school credentials; private, loopback, link-local, credential-bearing, and unsafe redirect destinations are rejected. The host validates the image, transfers it in bounded Native Messaging chunks, and the signed-in page uploads it through the school's official multipart endpoint. The resulting attachment URLs accompany the completion. Before uploading, the bridge checks that the requested model advertises `multimodal` support and verifies the dedicated session's saved model, switching it automatically when needed.
 
-The bridge accepts PNG, JPEG, static GIF, and WebP: at most four images, 10 MiB per image, 16 MiB of decoded image bytes per request, 16,384 pixels per side, and 40 megapixels per image. HTTP requests and serialized native jobs are limited to 24 MiB, including base64 overhead and text. The school's own limits may be lower. Images remain ordered and are referenced in the text transcript. Omit `detail` or use `auto`; resolution selection and OpenAI-hosted file IDs are not supported.
+Images in conversation history count as image input, even when the latest message is text-only. A model that does not advertise image support returns HTTP **400** with `error.type: invalid_request_error` and `error.code: unsupported_image_model`, before any school session change, upload, or generation. Use an image-capable model, start a text-only conversation, or explicitly enable **Settings → General → Text-only image history**.
+
+That setting (`omit_historical_images`, off by default) applies to every model. It replaces earlier image attachments with an explicit image-unavailable marker while retaining existing text and assistant descriptions. An image is eligible only when an assistant reply follows it and a later user turn follows that reply. Current images, consecutive unanswered user inputs, and images in an ongoing tool exchange stay intact. Omitted attachments are not downloaded, decoded, or uploaded, and no captions are generated. The model can use the retained text but cannot inspect omitted visual details. Turn the setting off to preserve all images again.
+
+The bridge accepts PNG, JPEG, static GIF, and WebP: at most four retained images, 10 MiB per image, 16 MiB of decoded image bytes per request, 16,384 pixels per side, and 40 megapixels per image. HTTP requests and serialized native jobs are limited to 24 MiB, including base64 overhead and text; the HTTP limit still includes omitted image data supplied by the client. The school's own limits may be lower. Images remain ordered and are referenced in the text transcript. Omit `detail` or use `auto`; resolution selection and OpenAI-hosted file IDs are not supported.
 
 Uploaded images are sent to school storage and are not automatically deleted, including after cancellation or failure. Uploads are never automatically retried.
 
@@ -110,7 +129,7 @@ curl http://127.0.0.1:8765/v1/responses \
   -d '{"model":"qwen3.6-27b","input":"Reply OK","store":false,"stream":true}'
 ```
 
-Only one school operation runs at a time. Busy requests fail without starting school work. Client disconnects and timeouts cancel active requests. Errors after SSE headers become structured error events without a successful stop. Missing school completion markers are treated as truncated responses. School requests are never automatically retried, including after HTTP 429. An already accepted generation may still be billed after cancellation.
+Only one school operation runs at a time. Busy requests fail without starting school work. Client disconnects and timeouts cancel active requests. Errors after SSE headers become structured error events without a successful stop. Like the school frontends, the bridge accepts either `[DONE]` or clean EOF after complete SSE events. Incomplete event frames, stream read failures, and explicit school errors still fail. A server that silently closes after a complete event cannot be distinguished from a normal end of the response. School requests are never automatically retried, including after HTTP 429. An already accepted generation may still be billed after cancellation.
 
 ### Client compatibility
 
@@ -147,7 +166,7 @@ The logo source is `design/logo/xipu-ai-bridge.svg`. Run `bridge-icons` to regen
 
 Pinned Go libraries provide JSON Schema validation and WebP decoding; their licenses ship with release artifacts. See [third-party notices](../THIRD_PARTY_NOTICES.md). The extension styles include adaptations of coss-ui components; see [design provenance](coss-ui-provenance.md). Test coverage and verification limits are documented in [the testing guide](verification.md).
 
-For a synthetic UI preview, run `node tests/popup-preview.cjs` or `node tests/options-preview.cjs` with the development Node runtime. These fixtures do not connect to the school or installed extension.
+For a synthetic UI preview, run `node tests/popup-preview.cjs` or `node tests/options-preview.cjs` with the development Node runtime. The popup starts at its welcome screen; add `onboarded=1` to preview the dashboard. Setup recovery states are available with `phase=creating|created|configured|complete`. These fixtures do not connect to the school or installed extension.
 
 ## Publishing releases
 

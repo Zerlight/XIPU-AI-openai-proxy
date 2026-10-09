@@ -8,7 +8,7 @@ const html = fs.readFileSync(path.join(root, "options.html"), "utf8");
 const shared = fs.readFileSync(path.join(root, "ui-settings.js"), "utf8");
 const source = fs.readFileSync(path.join(root, "options.js"), "utf8");
 const tick = () => new Promise(resolve => setImmediate(resolve));
-const initialConfig = () => ({ session_name: "Native session", port: 9876, default_model: "model-a", thinking: "low", online: false, chat_timeout_seconds: 300, model_timeout_seconds: 30, idle_timeout_seconds: 90, include_reasoning: true });
+const initialConfig = () => ({ session_name: "Native session", port: 9876, default_model: "model-a", thinking: "low", online: false, chat_timeout_seconds: 300, model_timeout_seconds: 30, idle_timeout_seconds: 90, include_reasoning: true, omit_historical_images: false });
 
 function mount(status = "ready") {
   let document;
@@ -63,6 +63,7 @@ function mount(status = "ready") {
         state.messages.push(message);
         if (state.handlers[message.type]) return state.handlers[message.type](message);
         if (state.errors[message.type]) return { ok: false, error: state.errors[message.type] };
+        if (message.type === "openSetup") return { ok: true };
         if (state.status === "offline" && message.type !== "reconnect") return { ok: false, error: "The native app is offline." };
         if (message.type === "getSettings") return snapshot();
         if (message.type === "saveSettings") { state.restartRequired = message.config.port !== state.config.port; state.config = { ...message.config }; return snapshot(); }
@@ -98,26 +99,52 @@ test("loads native settings, masks the key, and saves a validated explicit draft
   assert.equal(ui.get("api-key").type, "password");
   assert.equal(ui.get("save").disabled, true);
   assert.equal(ui.get("thinking").textContent, "Low");
+  assert.equal(ui.get("omit_historical_images").checked, false);
   ui.edit("port", "8766");
   ui.edit("thinking", "high");
   ui.edit("online", true);
+  ui.edit("omit_historical_images", true);
   await ui.submit();
   assert.equal(ui.state.config.port, 8766);
   assert.equal(ui.state.config.thinking, "high");
   assert.equal(ui.state.config.online, true);
+  assert.equal(ui.state.config.omit_historical_images, true);
   assert.equal(ui.get("thinking").textContent, "High");
   assert.equal(ui.get("restart").hidden, false);
   assert.equal(ui.get("save-state").textContent, "All changes saved");
   assert.equal(ui.get("notice").textContent, "Settings saved.");
 });
 
+test("setup stays accessible without the native app", async () => {
+  const ui = mount("offline"); await tick();
+  await ui.click("setup");
+  assert.equal(ui.state.messages.at(-1).type, "openSetup");
+});
+
+test("image history reads the saved preference and defaults missing values to off", async () => {
+  const ui = mount(); await tick();
+  ui.state.config.omit_historical_images = true;
+  await ui.click("reload");
+  assert.equal(ui.get("omit_historical_images").checked, true);
+  ui.edit("omit_historical_images", false);
+  await ui.submit();
+  assert.equal(ui.state.config.omit_historical_images, false);
+  delete ui.state.config.omit_historical_images;
+  await ui.click("reload");
+  assert.equal(ui.get("omit_historical_images").checked, false);
+  assert.equal(ui.get("save").disabled, true);
+});
+
 test("failed saves preserve the draft and do not claim success", async () => {
   const ui = mount(); await tick();
   ui.state.errors.saveSettings = "Native app is busy.";
   ui.edit("session_name", "Unsaved draft");
+  ui.edit("omit_historical_images", true);
   await ui.submit();
   assert.equal(ui.state.config.session_name, "Native session");
   assert.equal(ui.get("session_name").value, "Unsaved draft");
+  assert.equal(ui.state.config.omit_historical_images, false);
+  assert.equal(ui.get("omit_historical_images").checked, true);
   assert.equal(ui.get("save-state").textContent, "Unsaved changes");
   assert.equal(ui.get("error").textContent, "Native app is busy.");
   assert.equal(ui.get("save").disabled, false);
@@ -150,6 +177,8 @@ test("validates whole-number ranges, required session and timeout relationship",
 
 test("status updates preserve unsaved edits; reset defaults only changes the form", async () => {
   const ui = mount(); await tick();
+  ui.state.config.omit_historical_images = true;
+  await ui.click("reload");
   ui.edit("session_name", "Keep this draft");
   ui.state.emit({ bridgeStatus: { newValue: "busy" } });
   ui.state.emit({ bridgeStatus: { newValue: "ready" } });
@@ -158,9 +187,13 @@ test("status updates preserve unsaved edits; reset defaults only changes the for
   assert.equal(ui.get("session_name").value, "XIPU AI Bridge");
   assert.equal(ui.get("port").value, "8765");
   assert.equal(ui.get("thinking").textContent, "Minimal");
+  assert.equal(ui.get("omit_historical_images").checked, false);
+  assert.equal(ui.state.config.omit_historical_images, true);
   assert.equal(ui.state.config.session_name, "Native session");
   assert.match(ui.get("notice").textContent, /Save changes to apply/);
   assert.equal(ui.state.messages.filter(message => message.type === "saveSettings").length, 0);
+  await ui.submit();
+  assert.equal(ui.state.config.omit_historical_images, false);
 });
 
 test("read-only discovery disables unsafe sessions and only fills a draft", async () => {

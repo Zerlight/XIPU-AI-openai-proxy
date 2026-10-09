@@ -7,20 +7,35 @@
   <title>XIPU AI Bridge</title>
   <link rel="icon" type="image/svg+xml" href="icons/bridge.svg">
   <link rel="stylesheet" href="styles/coss.css">
+  <link rel="stylesheet" href="styles/brand.css">
   <link rel="stylesheet" href="styles/popup.css">
 </head>
 <body>
   <main>
     <header class="app-header">
-      <div class="app-mark" aria-hidden="true">
-        <svg viewBox="0 0 32 32" fill="currentColor" focusable="false"><path d="M2 21h3.5l4.65-10.63A4 4 0 0 1 13.81 8h4.38a4 4 0 0 1 3.66 2.37L26.5 21H30v5h-6.77l-5.69-13h-3.08L8.77 26H2z"/></svg>
-      </div>
-      <div><h1>XIPU AI Bridge</h1><p class="subtitle">Your local AI connection</p></div>
-      <button id="settings" class="settings-button" data-slot="button" data-variant="outline" data-size="icon" type="button" aria-label="Open settings" title="Open settings">
+      <h1 class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="currentColor" focusable="false"><path d="M2 21h3.5l4.65-10.63A4 4 0 0 1 13.81 8h4.38a4 4 0 0 1 3.66 2.37L26.5 21H30v5h-6.77l-5.69-13h-3.08L8.77 26H2z"/></svg></span><span class="brand-title">XIPU AI Bridge</span></h1>
+      <button id="settings" class="settings-button" data-slot="button" data-variant="outline" data-size="icon" type="button" aria-label="Open settings" title="Open settings" hidden>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 17h16"/><rect x="7" y="4" width="4" height="6" rx="1" fill="var(--background)"/><rect x="14" y="14" width="4" height="6" rx="1" fill="var(--background)"/></svg>
       </button>
     </header>
 
+    <p id="loading" class="description loading" role="status">Loading your connection…</p>
+    <section id="welcome" class="welcome" aria-labelledby="welcome-title" hidden>
+      <div class="welcome-intro"><h2 id="welcome-title">Welcome</h2><p id="welcome-description" class="description">Set up XIPU AI Bridge for your OpenAI-compatible client.</p></div>
+      <div data-slot="frame"><div data-slot="frame-panel" class="welcome-guide">
+        <ol class="welcome-steps">
+          <li><span class="step-number" aria-hidden="true">1</span><div><h3>Connect XIPU AI</h3><p class="description">Install the native app and sign in.</p></div></li>
+          <li><span class="step-number" aria-hidden="true">2</span><div><h3>Create a bridge session</h3><p class="description">A dedicated conversation for your client.</p></div></li>
+          <li><span class="step-number" aria-hidden="true">3</span><div><h3>Add your client</h3><p class="description">Copy your local URL and API key.</p></div></li>
+        </ol>
+      </div></div>
+      <div id="welcome-error" data-slot="alert" data-variant="error" role="alert" hidden></div>
+      <div class="welcome-actions"><button id="start-setup" data-slot="button" type="button">Start setup</button><button id="skip-setup" data-slot="button" data-variant="outline" type="button" disabled>Use existing setup</button><button id="welcome-retry" data-slot="button" data-variant="outline" type="button" hidden>Try again</button></div>
+      <p id="welcome-status" class="description" role="status" aria-live="polite">Setup opens in a new tab. Already configured? Use your existing setup to view the connection.</p>
+      <p class="privacy-note">Your school token stays in the browser.</p>
+    </section>
+
+    <div id="dashboard" class="dashboard" hidden>
     <section data-slot="card" aria-labelledby="connection-heading">
       <div class="card-content">
         <div class="section-heading">
@@ -65,7 +80,7 @@
     </section>
 
     <section class="session" aria-labelledby="session-heading">
-      <h2 id="session-heading">Dedicated session</h2>
+      <div class="section-heading"><h2 id="session-heading">Dedicated session</h2><button id="setup" data-slot="button" data-variant="outline" type="button">Setup</button></div>
       <p id="session">Waiting for the native app</p>
       <p class="description">Models switch to your client’s choice. Reserve this session for the bridge and keep context count at 0.</p>
     </section>
@@ -77,6 +92,7 @@
       </details>
       <p class="privacy-note">Your school token stays in the browser.</p>
     </footer>
+    </div>
   </main>
   <script src="ui-settings.js"></script>
   <script src="popup.js"></script>

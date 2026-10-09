@@ -29,7 +29,8 @@
     return images;
   }
 
-  function emit(job, message) {
+  function emit(job, message, signal) {
+    if (signal && (signal.aborted || controllers.get(job)?.signal !== signal)) return;
     window.postMessage({ source: SOURCE, type: "evt", job, ...message }, location.origin);
   }
 
@@ -61,6 +62,9 @@
   }
 
   async function asJSON(response, operation = "") {
+    if ([502, 503, 504].includes(response.status)) {
+      throw schoolError(null, `The school service is temporarily unavailable (HTTP ${response.status}). Try again later; no automatic retry was made.`, operation);
+    }
     let body;
     try { body = await response.json(); }
     catch { throw schoolError(null, `The school API returned invalid JSON (HTTP ${response.status}). Check the logged-in tab.`, operation); }
@@ -68,13 +72,115 @@
     return check(body, operation);
   }
 
-  async function pump(job, response) {
-    if (!(response.headers.get("content-type") || "").includes("text/event-stream")) {
-      emit(job, { kind: "event", event: await asJSON(response) });
+  function validSessionID(id) {
+    return typeof id === "string" ? !!id.trim() && id === id.trim()
+      : Number.isSafeInteger(id) && id > 0;
+  }
+
+  function sameSessionID(left, right) {
+    return validSessionID(left) && validSessionID(right) && String(left) === String(right);
+  }
+
+  async function setupSession(job, op, payload, options, lang, state) {
+    for (const field of ["name", "model"]) {
+      const value = payload[field];
+      if (typeof value !== "string" || !value || value !== value.trim() || value.length > 200 || /[\u0000-\u001f\u007f]/.test(value)) {
+        throw new Error(`Specify a valid setup ${field}, using at most 200 characters on one line.`);
+      }
+    }
+    if ((op === "setup_configure" || (op === "setup_check" && payload.session_id !== undefined)) && !validSessionID(payload.session_id)) {
+      throw new Error("Resume setup with the confirmed school session ID.");
+    }
+    if (op !== "setup_check") {
+      options.signal.throwIfAborted();
+      const catalog = await asJSON(await window.fetch(`${API}/api/chat/config?lang=${encodeURIComponent(lang)}`, options), "Load model catalog");
+      if (!Array.isArray(catalog?.data?.models)) throw new Error("The school API returned an invalid model list.");
+      if (!catalog.data.models.some(item => (typeof item === "string" ? item : item?.value || item?.model || item?.name) === payload.model)) {
+        throw new Error("The requested model is not available in the school model list.");
+      }
+    }
+    async function readSessions() {
+      options.signal.throwIfAborted();
+      const body = await asJSON(await window.fetch(`${API}/api/chat/session?lang=${encodeURIComponent(lang)}`, options), "Read school session");
+      if (!Array.isArray(body?.data) || body.data.some(item => !item || typeof item !== "object" || Array.isArray(item)
+        || !validSessionID(item.id) || typeof item.name !== "string")) {
+        throw new Error("The school API returned an invalid session list.");
+      }
+      return body.data;
+    }
+    async function saveSession(body, operation) {
+      options.signal.throwIfAborted();
+      if (op === "setup_create") state.createAttempted = true;
+      const saved = await asJSON(await window.fetch(`${API}/api/chat/saveSession`, {
+        ...options, method: "POST", headers: { ...options.headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ ...body, lang })
+      }), operation);
+      if (!saved || typeof saved !== "object" || Array.isArray(saved) || (saved.code !== 0 && saved.code !== "0")) {
+        throw new Error(`${operation}: The school API returned an invalid acknowledgement.`);
+      }
+      return saved;
+    }
+    function exactSession(sessions) {
+      const matches = sessions.filter(item => item.name === payload.name);
+      if (!matches.length && op === "setup_check") return null;
+      if (!matches.length) throw new Error("The created conversation is missing or has been renamed. Refresh XIPU AI, then resume setup with its original name.");
+      if (matches.length !== 1) throw new Error("Multiple conversations have the setup name. Give each conversation a unique name before resuming setup.");
+      if (payload.session_id !== undefined && !sameSessionID(matches[0].id, payload.session_id)) throw new Error("The conversation with the setup name has a different ID. Select the intended conversation in Settings.");
+      if (sessions.filter(item => sameSessionID(item.id, matches[0].id)).length !== 1) throw new Error("The school returned a duplicate conversation ID. Refresh XIPU AI before resuming setup.");
+      return matches[0];
+    }
+    const sessions = await readSessions();
+    if (op === "setup_check") {
+      const session = exactSession(sessions);
+      if (session && typeof session.model !== "string") throw new Error("The school API returned an invalid session model.");
+      emit(job, { kind: "result", result: { session: session ? {
+        id: session.id, name: session.name, model: session.model,
+        contextCount: typeof session.contextCount === "number" ? session.contextCount : null,
+        promptEmpty: session.prompt === ""
+      } : null } }, options.signal);
       return;
     }
-    if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+    if (op === "setup_create") {
+      if (sessions.some(item => item.name === payload.name)) {
+        throw new Error("A school session already has this name. Choose a new name or select the existing session in settings.");
+      }
+      const saved = await saveSession({ name: payload.name }, "Create school session");
+      const created = saved.data;
+      if (!created || typeof created !== "object" || Array.isArray(created) || !validSessionID(created.id)
+        || (Object.hasOwn(created, "name") && created.name !== payload.name)
+        || sessions.some(item => sameSessionID(item.id, created.id))) {
+        throw new Error("The school API did not confirm a new session identity. Inspect the school session list before starting another setup.");
+      }
+      // Return a confirmed identity immediately so the extension can persist recovery state.
+      emit(job, { kind: "result", result: { session: { id: created.id, name: payload.name } } }, options.signal);
+      return;
+    }
+    let session = exactSession(sessions);
+    const configured = value => value.model === payload.model && value.contextCount === 0 && value.prompt === "";
+    if (!configured(session)) {
+      await saveSession({ ...session, model: payload.model, contextCount: 0, prompt: "" }, "Configure school session");
+      session = exactSession(await readSessions());
+      if (!configured(session)) {
+        throw new Error("The school session did not retain the requested model, Context Count 0 and empty prompt. Setup is incomplete.");
+      }
+    }
+    options.signal.throwIfAborted();
+    emit(job, { kind: "result", result: { session: {
+      id: session.id, name: session.name, model: session.model, contextCount: session.contextCount
+    } } }, options.signal);
+  }
+
+  async function pump(job, response, signal) {
+    signal.throwIfAborted();
+    if (!(response.headers.get("content-type") || "").includes("text/event-stream")) {
+      emit(job, { kind: "event", event: await asJSON(response) }, signal);
+      return;
+    }
+    if (!response.ok) await asJSON(response);
+    if (!response.body) throw new Error(`HTTP ${response.status}`);
     const reader = response.body.getReader();
+    const cancelReader = () => { reader.cancel().catch(() => {}); };
+    signal.addEventListener("abort", cancelReader, { once: true });
     const decoder = new TextDecoder();
     let buffer = "", data = [], size = 0, finished = false;
 
@@ -87,7 +193,7 @@
         let event;
         try { event = JSON.parse(frame); }
         catch { throw new Error("The school API returned an invalid SSE event."); }
-        emit(job, { kind: "event", event: check(event) });
+        emit(job, { kind: "event", event: check(event) }, signal);
       } else if (value === "data" || value.startsWith("data:")) {
         const part = value === "data" ? "" : value.slice(5).replace(/^ /, "");
         size += part.length + 1;
@@ -107,25 +213,31 @@
       }
       if (buffer.length > 1024 * 1024) throw new Error("The school API event exceeded the size limit.");
       if (eof && !finished) {
-        if (buffer) line(buffer);
-        line("");
+        // The school frontends finish on clean EOF; [DONE] is optional.
+        if (buffer || data.length) {
+          if (buffer) line(buffer);
+          if (data.length && data.join("\n") !== "[DONE]") throw new Error("The school stream ended with an incomplete SSE event; the response may be incomplete.");
+        }
+        finished = true;
       }
     }
 
     try {
       while (!finished) {
+        signal.throwIfAborted();
         const { value, done } = await reader.read();
+        signal.throwIfAborted();
         buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
         consume(done);
         if (done) break;
       }
-      if (!finished) throw new Error("The school stream ended before its completion marker; the response may be incomplete.");
     } finally {
+      signal.removeEventListener("abort", cancelReader);
       try { await reader.cancel(); } finally { reader.releaseLock(); }
     }
   }
 
-  async function run(job, op, payload) {
+  async function run(job, op, payload, state) {
     const token = readToken();
     if (!token) throw new Error("Sign in to XIPU AI in this tab first.");
     const lang = localStorage.getItem(btoa("__XP_JM_LANG__")) || "zh";
@@ -134,9 +246,10 @@
       const response = await window.fetch(`${API}/api/chat/config?lang=${encodeURIComponent(lang)}`, options);
       const catalog = await asJSON(response, "Load model catalog");
       if (op === "models") {
-        emit(job, { kind: "result", result: catalog });
+        emit(job, { kind: "result", result: catalog }, options.signal);
         return;
       }
+      options.signal.throwIfAborted();
       const listing = await window.fetch(`${API}/api/chat/session?lang=${encodeURIComponent(lang)}`, options);
       const sessions = await asJSON(listing, "Read school session");
       if (!Array.isArray(catalog?.data?.models) || !Array.isArray(sessions?.data)) {
@@ -152,7 +265,11 @@
         sessions: sessions.data.filter(item => item && typeof item.name === "string" && typeof item.model === "string"
           && ["string", "number"].includes(typeof item.id))
           .map(({ id, name, model, contextCount }) => ({ id, name, model, contextCount: typeof contextCount === "number" ? contextCount : null }))
-      }});
+      }}, options.signal);
+      return;
+    }
+    if (["setup_create", "setup_configure", "setup_check"].includes(op)) {
+      await setupSession(job, op, payload, options, lang, state);
       return;
     }
     if (typeof payload.session_name !== "string" || !payload.session_name.trim()) {
@@ -180,16 +297,14 @@
       const matches = body.data.filter(item => item?.name === payload.session_name);
       if (matches.length !== 1) throw new Error(`Exactly one school session must be named "${payload.session_name}".`);
       const session = matches[0];
-      const validID = typeof session.id === "string" ? !!session.id.trim() && session.id === session.id.trim()
-        : Number.isSafeInteger(session.id) && session.id > 0;
-      if (!validID) throw new Error("The school API did not return a valid session ID.");
+      if (!validSessionID(session.id)) throw new Error("The school API did not return a valid session ID.");
       if (session.contextCount !== 0) throw new Error("The dedicated session must use Context Count 0. No completion was sent.");
       return { session, status: response.status, code: body.code };
     }
     if (images.length) {
       const model = await requestedModel();
       if (model?.multimodal !== true && model?.multimodal !== 1) {
-        throw new Error("The requested school model does not advertise image support. No image was uploaded.");
+        throw Object.assign(new Error("The requested school model does not advertise image support. This request includes an image, possibly from conversation history. Use an image-capable model, start a text-only conversation, or enable Text-only image history in Settings for earlier images. No image was uploaded."), { code: "unsupported_image_model" });
       }
     }
     let selected = await readSession();
@@ -205,7 +320,7 @@
         throw new Error("The school API returned an invalid session update result.");
       }
       selected = await readSession();
-      if (selected.session.id !== session.id || selected.session.model !== payload.model) {
+      if (!sameSessionID(selected.session.id, session.id) || selected.session.model !== payload.model) {
         throw new Error("The school session did not retain the requested model and identity. No completion was sent.");
       }
       session = selected.session;
@@ -213,7 +328,7 @@
     emit(job, { kind: "lifecycle", result: {
       path: "/api/chat/session", status: selected.status, code: selected.code,
       id: session.id, model: session.model, contextCount: session.contextCount
-    }});
+    }}, options.signal);
     const files = [];
     for (const image of images) {
       options.signal.throwIfAborted();
@@ -237,7 +352,7 @@
         thinking: payload.thinking || "minimal", sessionId: session.id, responseId: null, lang
       })
     });
-    await pump(job, completion);
+    await pump(job, completion, options.signal);
   }
 
   window.addEventListener("message", event => {
@@ -247,14 +362,28 @@
     if (typeof job !== "string" || !job || job.length > 128) return;
     if (type === "cancel") { controllers.get(job)?.abort(); return; }
     if (type !== "req" || controllers.has(job)) return;
-    if (!["models", "chat", "inspect"].includes(op) || controllers.size) {
-      emit(job, { kind: "done", message: "Unsupported operation or another school request is active." });
+    if (!["models", "chat", "inspect", "setup_create", "setup_configure", "setup_check"].includes(op) || controllers.size) {
+      emit(job, { kind: "done", message: "Unsupported operation or another school request is active.",
+        ...(op === "setup_create" ? { result: { notCreated: true } } : {}) });
       return;
     }
-    controllers.set(job, new AbortController());
-    run(job, op, payload || {}).then(
-      () => emit(job, { kind: "done" }),
-      error => emit(job, { kind: "done", message: error?.message || "The school request failed." })
-    ).finally(() => controllers.delete(job));
+    const controller = new AbortController(), state = { createAttempted: false };
+    let settled = false;
+    function settle(message = "", code = "") {
+      if (settled) return;
+      settled = true;
+      controller.signal.removeEventListener("abort", cancelled);
+      if (controllers.get(job) === controller) controllers.delete(job);
+      emit(job, { kind: "done", ...(message ? { message } : {}),
+        ...(code === "unsupported_image_model" ? { code } : {}),
+        ...(message && op === "setup_create" && !state.createAttempted ? { result: { notCreated: true } } : {}) });
+    }
+    const cancelled = () => settle("The school request was cancelled.");
+    controllers.set(job, controller);
+    controller.signal.addEventListener("abort", cancelled, { once: true });
+    run(job, op, payload || {}, state).then(
+      () => settle(),
+      error => settle(error?.message || "The school request failed.", error?.code)
+    );
   });
 })();

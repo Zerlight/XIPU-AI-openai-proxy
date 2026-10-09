@@ -48,7 +48,7 @@ done
 
 # Explicit inputs prevent developer config, credentials, or test transcripts
 # from accidentally entering the browser-store package.
-extension_files=(manifest.json background.js bridge.js page.js popup.html popup.js options.html options.js ui-settings.js ui-controls.js styles/coss.css styles/popup.css styles/options.css styles/LICENSE.coss.txt)
+extension_files=(manifest.json background.js bridge.js page.js popup.html popup.js options.html options.js setup.html setup.js ui-settings.js ui-controls.js styles/coss.css styles/brand.css styles/popup.css styles/options.css styles/setup.css styles/LICENSE.coss.txt)
 while IFS= read -r -d '' icon; do
   extension_files+=("${icon#extension/}")
 done < <(find extension -type f \( -path 'extension/icons/*.png' -o -path 'extension/icons/*.svg' \) -print0)

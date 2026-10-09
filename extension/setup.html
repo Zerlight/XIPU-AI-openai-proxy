@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Setup · XIPU AI Bridge</title>
+  <link rel="icon" type="image/svg+xml" href="icons/bridge.svg">
+  <link rel="stylesheet" href="styles/coss.css">
+  <link rel="stylesheet" href="styles/brand.css">
+  <link rel="stylesheet" href="styles/setup.css">
+</head>
+<body>
+  <main>
+    <header class="page-header">
+      <p class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="currentColor" focusable="false"><path d="M2 21h3.5l4.65-10.63A4 4 0 0 1 13.81 8h4.38a4 4 0 0 1 3.66 2.37L26.5 21H30v5h-6.77l-5.69-13h-3.08L8.77 26H2z"/></svg></span><span class="brand-title">XIPU AI Bridge</span></p>
+      <h1>Setup</h1>
+      <p class="description">Follow these steps to connect your client to XIPU AI.</p>
+    </header>
+    <ol class="steps" aria-label="Setup progress">
+      <li id="step-1" aria-current="step"><span class="step-number" aria-hidden="true"><span>1</span><svg viewBox="0 0 16 16" fill="none"><path d="m3 8 3 3 7-7"/></svg></span><span>Connect</span></li>
+      <li id="step-2"><span class="step-number" aria-hidden="true"><span>2</span><svg viewBox="0 0 16 16" fill="none"><path d="m3 8 3 3 7-7"/></svg></span><span>Create session</span></li>
+      <li id="step-3"><span class="step-number" aria-hidden="true"><span>3</span><svg viewBox="0 0 16 16" fill="none"><path d="m3 8 3 3 7-7"/></svg></span><span>Connect client</span></li>
+    </ol>
+    <div class="connection-summary"><span id="connection-status" data-slot="badge" data-variant="secondary" role="status">Checking</span><p id="connection-detail" class="description" aria-live="polite">Reading connection status…</p><div class="button-row"><button id="stop-waiting" data-slot="button" data-variant="outline" type="button" hidden>Stop waiting</button><button id="check-connection" data-slot="button" data-variant="outline" type="button" title="Refresh local connection status">Refresh</button></div></div>
+    <div id="error" data-slot="alert" data-variant="error" role="alert" hidden></div>
+    <div id="notice" data-slot="alert" role="status" aria-live="polite" hidden></div>
+
+    <section id="connection-panel" data-slot="frame" aria-labelledby="connection-heading">
+      <header data-slot="frame-panel-header"><h2 id="connection-heading" data-slot="frame-panel-title">Connect XIPU AI</h2><p data-slot="frame-panel-description">Install the native app, then sign in to XIPU AI.</p></header>
+      <div data-slot="frame-panel">
+        <div class="setup-row"><div class="field-label"><h3>Native app</h3><p class="description">Runs locally and starts with the extension.</p></div><div class="button-row"><a data-slot="button" data-variant="outline" href="https://github.com/Zerlight/XIPU-AI-openai-proxy/releases" target="_blank" rel="noopener noreferrer">Download app</a><button id="reconnect" data-slot="button" type="button">Reconnect</button></div></div>
+        <div class="setup-row"><div class="field-label"><h3>School account</h3><p class="description">Keep the signed-in tab open while using your client.</p></div><a data-slot="button" data-variant="outline" href="https://xipuai-xjtlu-edu-cn-s.xjtlu.edu.cn/v3/chat" target="_blank" rel="noopener noreferrer">Open XIPU AI<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M6 3h7v7M13 3l-9 9"/></svg></a></div>
+      </div>
+    </section>
+
+    <section id="session-panel" data-slot="frame" aria-labelledby="session-heading" hidden>
+      <header data-slot="frame-panel-header"><div class="title-row"><div><h2 id="session-heading" data-slot="frame-panel-title">Create a dedicated conversation</h2><p data-slot="frame-panel-description">One conversation reserved for your bridge.</p></div><button id="inspect" data-slot="button" data-variant="outline" type="button">Load models</button></div></header>
+      <div data-slot="frame-panel">
+          <form id="session-form" novalidate>
+          <div class="setup-row"><div class="field-label"><label id="model-label" for="model">Initial model</label><p id="model-help" class="description">You can switch models from your client later.</p></div><span data-slot="select"><button id="model" data-slot="select-trigger" type="button" value="" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-labelledby="model-label" aria-describedby="model-help model-cost" disabled>Load models to choose</button></span></div>
+          <div class="setup-row"><div class="field-label"><label for="session-name">Conversation name</label><p id="session-help" class="description">Choose a unique name for a new conversation.</p></div><span data-slot="input-control"><input id="session-name" data-slot="input" type="text" value="XIPU AI Bridge" maxlength="200" autocomplete="off" required aria-describedby="session-help"></span></div>
+          <div class="setup-note"><p id="model-cost" class="description">Paid models use your school credits when you send requests.</p></div>
+          <div id="recovery" data-slot="alert" data-variant="warning" role="status" hidden></div>
+          <div class="form-actions"><p class="description">No response is generated during setup.</p><div class="button-row"><button id="check-setup" data-slot="button" data-variant="outline" type="button" hidden>Check setup</button><button id="create-session" data-slot="button" type="submit" disabled>Create bridge session</button></div></div>
+        </form>
+      </div>
+      <p data-slot="frame-panel-footer" class="description">Each request uses your client’s context. Keep this conversation reserved for the bridge.</p>
+    </section>
+
+    <section id="client-panel" data-slot="frame" aria-labelledby="client-heading" hidden>
+      <header data-slot="frame-panel-header"><div class="title-row"><h2 id="client-heading" data-slot="frame-panel-title" tabindex="-1">Ready to connect</h2><span id="client-status" data-slot="badge" data-variant="success">Configured</span></div><p id="ready-session" data-slot="frame-panel-description"></p></header>
+      <div data-slot="frame-panel">
+        <p class="setup-note description">Choose an OpenAI-compatible connection in your client and paste these details.</p>
+        <p id="client-verification" class="setup-note description" hidden>Saved locally. The school conversation will be checked when your client sends a request.</p>
+        <div class="setup-row"><div class="field-label"><label for="base-url">Base URL</label><p class="description">Your local connection endpoint.</p></div><div class="control-row"><span data-slot="input-control"><input id="base-url" data-slot="input" type="text" readonly spellcheck="false"></span><button id="copy-url" data-slot="button" data-variant="outline" data-size="icon" type="button" aria-label="Copy base URL" title="Copy base URL" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg></button></div></div>
+        <div class="setup-row"><div class="field-label"><label for="api-key">API key</label><p class="description">For your local client only.</p></div><div class="control-row"><span data-slot="input-control"><input id="api-key" data-slot="input" type="password" readonly autocomplete="off" spellcheck="false"></span><button id="show-key" data-slot="button" data-variant="outline" type="button" aria-pressed="false" disabled>Show</button><button id="copy-key" data-slot="button" data-variant="outline" data-size="icon" type="button" aria-label="Copy API key" title="Copy API key" disabled><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg></button></div></div>
+        <div class="form-actions"><p class="description">You can close this page. Find these details in the extension anytime.</p><button id="finish" data-slot="button" type="button">Open settings</button></div>
+      </div>
+    </section>
+    <footer><p>Your school token stays in the browser.</p><button id="settings" data-slot="button" data-variant="outline" type="button">Use an existing session</button></footer>
+  </main>
+  <script src="ui-controls.js"></script>
+  <script src="ui-settings.js"></script>
+  <script src="setup.js"></script>
+</body>
+</html>

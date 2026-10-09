@@ -21,6 +21,7 @@ type Event struct {
 	Job     string          `json:"job"`
 	Kind    string          `json:"kind"`
 	Message string          `json:"message"`
+	Code    string          `json:"code,omitempty"`
 	Event   json.RawMessage `json:"event"`
 	Result  json.RawMessage `json:"result"`
 }
@@ -43,7 +44,15 @@ var errIdle = errors.New("Request was idle and was cancelled; request was not re
 var errMissingText = errors.New("School did not return any text or reasoning")
 var errInvalidGeneration = errors.New("School output did not satisfy the requested format")
 
+type unsupportedImageModelError string
+
+func (err unsupportedImageModelError) Error() string { return string(err) }
+
 func errorStatus(err error) (int, string) {
+	var unsupported unsupportedImageModelError
+	if errors.As(err, &unsupported) {
+		return 400, "unsupported_image_model"
+	}
 	if errors.Is(err, errInvalidGeneration) {
 		return 502, "invalid_generation"
 	}
@@ -158,7 +167,14 @@ func (s *Server) Receive(message map[string]json.RawMessage) error {
 }
 
 func apiError(w http.ResponseWriter, status int, code, message string) {
-	writeJSON(w, status, map[string]any{"error": map[string]any{"message": message, "type": "bridge_error", "code": code}})
+	writeJSON(w, status, map[string]any{"error": map[string]any{"message": message, "type": errorType(code), "code": code}})
+}
+
+func errorType(code string) string {
+	if code == "unsupported_image_model" {
+		return "invalid_request_error"
+	}
+	return "bridge_error"
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -323,6 +339,9 @@ func (s *Server) wait(ctx context.Context, active *job, timeout time.Duration, c
 				text := event.Message
 				if text == "" {
 					text = "School request failed"
+				}
+				if event.Code == "unsupported_image_model" {
+					return true, unsupportedImageModelError(text)
 				}
 				return true, errors.New(text)
 			}

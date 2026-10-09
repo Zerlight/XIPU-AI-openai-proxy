@@ -1,0 +1,4 @@
+.brand { display: flex; align-items: center; gap: 10px; margin: 0; color: var(--foreground); }
+.brand-mark { display: grid; place-items: center; flex-shrink: 0; width: 36px; height: 36px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--secondary); }
+.brand-mark svg { width: 26px; height: 26px; }
+.brand-title { font: 600 1rem/1.5 var(--font-sans); letter-spacing: -.015em; white-space: nowrap; }

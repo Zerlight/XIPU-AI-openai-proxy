@@ -14,12 +14,13 @@ devenv shell -- bash packaging/check.sh
 | Area | Coverage |
 | --- | --- |
 | Go | Formatting, vet, unit tests, and the race detector on macOS/Linux |
-| HTTP and streaming | Authentication, loopback checks, Chat Completions and Responses JSON/SSE, cancellation, timeouts, truncated streams, and error semantics |
+| HTTP and streaming | Authentication, loopback checks, Chat Completions and Responses JSON/SSE, optional school completion markers, clean EOF, incomplete frames, read failures, cancellation, and timeouts |
 | Client compatibility | Accepted token-limit fields, invalid and conflicting values, ignored-parameter headers, unknown usage, and CORS header access |
 | Native Messaging | Framing, bounded chunk assembly, ordering, disconnects, reconnect without replay, and clean shutdown |
 | Extension integration | A real Go subprocess connected through background, isolated content, and page scripts using a synthetic school API |
 | School request boundaries | Automatic model updates preserving other settings, saved model/session-ID verification, Context Count 0, unchanged compatibility prompts, no automatic retries, and school-token containment |
-| Images | PNG/JPEG/GIF/WebP validation, dimension and byte limits, safe public HTTPS retrieval, chunked transport, multipart upload, and upload failure without generation |
+| First-run setup | Explicit creation, verified isolation settings, persistent progress, read-only recovery after HTTP 502, cancellation and late-reply handling, manual settings recovery, and no generation during setup |
+| Images | PNG/JPEG/GIF/WebP validation, size limits, safe public HTTPS retrieval, multipart upload, typed capability errors before generation, opt-in answered-history omission, and current-image protection |
 | Tools and structured output | Function-call round trips, call-ID matching, argument validation, JSON Schema output, bounded schema processing, and blocked external resources |
 | Settings and UI | Validated drafts, persistence failures, busy/offline states, key rotation, theme changes, clipboard errors, select keyboard behavior, and focus handling |
 | Installation and packaging | OS/browser registration layouts, configuration preservation, argument quoting, launcher exit status, archive contents, permissions, checksums, and extension identity |

@@ -127,15 +127,14 @@ func parseTools(raw []json.RawMessage, choice json.RawMessage, parallel *bool, r
 }
 
 type generationRequest struct {
-	model     *string
-	messages  []message
-	stream    bool
-	effort    *string
-	online    json.RawMessage
-	tools     toolPolicy
-	format    outputFormat
-	text      string
-	imageURLs []string
+	model    *string
+	messages []message
+	stream   bool
+	effort   *string
+	online   json.RawMessage
+	tools    toolPolicy
+	format   outputFormat
+	text     string
 }
 type generationResult struct {
 	content   string
@@ -144,7 +143,8 @@ type generationResult struct {
 }
 
 func (request *generationRequest) prepare() error {
-	text, images, err := buildTranscript(request.messages)
+	// The retained-image limit depends on the settings snapshot taken for the job.
+	text, _, err := renderTranscript(request.messages, false, 0)
 	if err != nil {
 		return err
 	}
@@ -152,7 +152,6 @@ func (request *generationRequest) prepare() error {
 		return errors.New("Message content is empty")
 	}
 	request.text = text
-	request.imageURLs = images
 	return nil
 }
 func (request generationRequest) buffered() bool {
@@ -422,11 +421,16 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, request genera
 		default:
 			return nil, errors.New("Online must be a boolean or 0 or 1")
 		}
+		text, imageURLs, err := renderTranscript(request.messages, settings.OmitHistoricalImages, 4)
+		if err != nil {
+			return nil, err
+		}
+		request.text = text
 		var images []imageAttachment
 		total := 0
 		ctx, cancel := context.WithDeadline(r.Context(), deadline)
 		defer cancel()
-		for _, url := range request.imageURLs {
+		for _, url := range imageURLs {
 			image, err := resolveImage(ctx, url)
 			if err != nil {
 				if errors.Is(err, context.DeadlineExceeded) {
@@ -593,7 +597,7 @@ func (o *chatOutput) finish(result generationResult) error {
 }
 func (o *chatOutput) fail(err error) {
 	_, code := errorStatus(err)
-	writeSSE(o.writer, "error", map[string]any{"error": map[string]any{"message": err.Error(), "type": "bridge_error", "code": code}})
+	writeSSE(o.writer, "error", map[string]any{"error": map[string]any{"message": err.Error(), "type": errorType(code), "code": code}})
 	writeDone(o.writer)
 }
 func (o *chatOutput) response(result generationResult) map[string]any {

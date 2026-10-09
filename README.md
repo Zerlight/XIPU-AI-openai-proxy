@@ -63,10 +63,12 @@ Keep this folder in place. The extension is already configured to connect to the
 
 ### 3. Connect XIPU AI
 
-1. Sign in to XIPU AI and refresh the tab.
-2. Create a conversation named **XIPU AI Bridge** exclusively for the bridge. Leave its system prompt empty and set **Context Count** to **0**. Its initial model can be any available model.
-3. Open the extension's **Settings**, click **Load from XIPU AI**, select that conversation, then click **Use session** and **Save changes**.
-4. Copy the **base URL** and **API key** from the extension popup into your client.
+1. Click **XIPU AI Bridge** in Chrome's toolbar or Extensions menu. On the welcome screen, choose **Start setup** to open the guide in a new tab.
+2. Sign in to XIPU AI and refresh the tab, then load the available models in Setup.
+3. Choose a model and a unique conversation name, then click **Create bridge session**. Setup creates the conversation, sets Context Count to **0** with an empty system prompt, verifies it, and saves the connection settings.
+4. Copy the **base URL** and **API key** into your client. Setup does not send a model prompt.
+
+Already configured this computer? Choose **Use existing setup** on the welcome screen to open the dashboard. To select an existing dedicated conversation, use **Settings → Load from XIPU AI → Use session**, then **Save changes**.
 
 Keep the XIPU AI tab signed in. **Choose models in your client; the bridge updates the dedicated conversation automatically.**
 

@@ -62,6 +62,14 @@ function files(dir, base = dir) {
   }).sort();
 }
 try {
+  const extensionZip = path.join(release, 'xipu-bridge-extension.zip');
+  const extensionDir = path.join(temporary, 'extension');
+  fs.mkdirSync(extensionDir);
+  command(process.platform === 'win32' ? 'tar' : 'unzip', process.platform === 'win32'
+    ? ['-xf', extensionZip, '-C', extensionDir] : ['-q', extensionZip, '-d', extensionDir]);
+  for (const file of ['manifest.json', 'background.js', 'page.js', 'setup.html', 'setup.js', 'styles/setup.css', 'styles/brand.css']) {
+    assert.deepEqual(fs.readFileSync(path.join(extensionDir, file)), fs.readFileSync(path.join(repo, 'extension', file)), 'stale or missing extension file: ' + file);
+  }
   for (const platform of ['macos', 'linux', 'windows']) for (const arch of ['arm64', 'amd64']) {
     const prefix = `xipu-ai-bridge_${version}_${platform}_${arch}`;
     const archive = prefix + (platform === 'linux' ? '.tar.gz' : '.zip');

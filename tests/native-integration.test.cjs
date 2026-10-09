@@ -15,6 +15,7 @@ const schoolOrigin = 'https://xipuai-xjtlu-edu-cn-s.xjtlu.edu.cn';
 const token = 'synthetic-school-token';
 const model = 'synthetic-paid-model';
 const secondModel = 'synthetic-second-model';
+const textOnlyModel = 'synthetic-text-only-model';
 const session = { id: 8, name: 'Synthetic dedicated session', model, contextCount: 0, temperature: 0.3, prompt: '', plugins: [] };
 const event = () => ({ listeners: [], addListener(fn) { this.listeners.push(fn); }, emit(...args) { for (const fn of this.listeners) fn(...args); } });
 const pair = () => {
@@ -83,7 +84,7 @@ async function main() {
   const chrome = {
     runtime: { id: extensionID, getURL: file => 'chrome-extension://' + extensionID + '/' + file,
       onConnect: event(), onMessage: event(), onStartup: event(), onInstalled: event(), connectNative: () => native },
-    storage: { local: { set() {}, remove() {}, setAccessLevel() {} } }
+    storage: { local: { get: async () => ({}), set() {}, remove() {}, setAccessLevel() {} } }
   };
   vm.runInNewContext(fs.readFileSync(path.join(root, 'extension/background.js'), 'utf8'), { chrome, URL, atob, btoa, TextDecoder, Uint8Array, setTimeout, clearTimeout });
   const ui = message => new Promise(resolve => chrome.runtime.onMessage.emit(message, { id: extensionID, url: chrome.runtime.getURL('options.html') }, resolve));
@@ -93,6 +94,7 @@ async function main() {
   const listeners = [], calls = [];
   let uploadFails = false, ignoreModelSave = false;
   let schoolSession = { ...session };
+  let setupSession;
   const uploadedURL = 'https://tosai.xjtlu.edu.cn/synthetic-image.png';
   const png = imageFixture();
   const window = {
@@ -113,13 +115,24 @@ async function main() {
         return new Response(JSON.stringify(uploadFails ? { code: 429, msg: 'Synthetic upload rate limit' } : { code: 0, data: { url: uploadedURL } }), { status: uploadFails ? 429 : 200 });
       }
       calls.push({ url, body: options.body && JSON.parse(options.body) });
-      if (url.includes('/api/chat/config?')) return new Response(JSON.stringify({ code: 0, data: { models: [{ value: model, label: 'Synthetic model', multimodal: true }, { value: secondModel, label: 'Second model', multimodal: true }] } }));
-      if (url.includes('/api/chat/session?')) return new Response(JSON.stringify({ code: 0, data: [schoolSession] }));
+      if (url.includes('/api/chat/config?')) return new Response(JSON.stringify({ code: 0, data: { models: [{ value: model, label: 'Synthetic model', multimodal: true }, { value: secondModel, label: 'Second model', multimodal: true }, { value: textOnlyModel, label: 'Text-only model', multimodal: false }] } }));
+      if (url.includes('/api/chat/session?')) return new Response(JSON.stringify({ code: 0, data: [schoolSession, ...(setupSession ? [setupSession] : [])] }));
       if (url.endsWith('/api/chat/saveSession')) {
         const body = calls.at(-1).body;
         assert.equal(options.method, 'POST');
         assert.equal(options.headers['Content-Type'], 'application/json');
-        assert.ok([model, secondModel].includes(body.model));
+        if (body.id === undefined) {
+          assert.deepEqual(body, { name: 'New dedicated session', lang: 'en' });
+          assert.equal(setupSession, undefined, 'setup must not create duplicate conversations');
+          setupSession = { id: '9', name: body.name, model: 'school-default', contextCount: 5, prompt: 'Default school prompt', temperature: 0.4 };
+          return new Response(JSON.stringify({ code: 0, data: { ...setupSession, id: 9 } }));
+        }
+        if (body.id === '9') {
+          assert.deepEqual(body, { ...setupSession, model, contextCount: 0, prompt: '', lang: 'en' });
+          setupSession = { ...setupSession, model, contextCount: 0, prompt: '' };
+          return new Response(JSON.stringify({ code: 0 }));
+        }
+        assert.ok([model, secondModel, textOnlyModel].includes(body.model));
         assert.deepEqual(body, { ...schoolSession, model: body.model, lang: 'en' });
         if (!ignoreModelSave) schoolSession = { ...schoolSession, model: body.model };
         return new Response(JSON.stringify({ code: 0 }));
@@ -127,9 +140,10 @@ async function main() {
       assert.ok(url.endsWith('/api/chat/completions'));
       assert.equal(calls.at(-1).body.sessionId, session.id);
       if (calls.at(-1).body.text === 'TRUNCATE') {
-        return new Response('data: {"type":"string","data":"TRUNCATED_CONTENT"}\n\n', { headers: { 'Content-Type': 'text/event-stream' } });
+        return new Response('data: {"type":"string","data":"TRUNCATED_CONTENT"}\n\ndata: {"type":"string","data":"unfinished', { headers: { 'Content-Type': 'text/event-stream' } });
       }
       const prompt = calls.at(-1).body.text;
+      const cleanEOF = prompt.includes('CLEAN_EOF');
       let answer = 'INTEGRATION_OK';
       if (prompt.startsWith('ROUTE_CASE')) {
         answer = 'ROUTED:' + schoolSession.model;
@@ -146,8 +160,8 @@ async function main() {
       } else if (prompt.includes('SCHEMA_INVALID')) {
         answer = '{"answer":"wrong"}';
       }
-      if (answer !== 'INTEGRATION_OK') return new Response(`data: ${JSON.stringify({ type: 'string', data: answer })}\n\ndata: [DONE]\n\n`, { headers: { 'Content-Type': 'text/event-stream' } });
-      return new Response('data: {"type":"string","reasoning_data":"reason"}\r\n\r\ndata: {"type":"string","data":"INTEGRATION_OK"}\r\n\r\ndata: [DONE]\r\n\r\n', { headers: { 'Content-Type': 'text/event-stream' } });
+      if (answer !== 'INTEGRATION_OK') return new Response(`data: ${JSON.stringify({ type: 'string', data: answer })}\n\n${cleanEOF ? '' : 'data: [DONE]\n\n'}`, { headers: { 'Content-Type': 'text/event-stream' } });
+      return new Response('data: {"type":"string","reasoning_data":"reason"}\r\n\r\ndata: {"type":"string","data":"INTEGRATION_OK"}\r\n\r\n' + (cleanEOF ? '' : 'data: [DONE]\r\n\r\n'), { headers: { 'Content-Type': 'text/event-stream' } });
     }
   };
   const shared = { window, location: { origin: schoolOrigin }, URL, TextDecoder, AbortController, atob, Blob, File, FormData, Uint8Array };
@@ -162,9 +176,23 @@ async function main() {
     const settings = await ui({ type: 'getSettings' });
     assert.equal(settings.ok, true);
     assert.equal(settings.config.session_name, session.name);
+    assert.equal(settings.config.omit_historical_images, false);
     const inspected = await ui({ type: 'inspectSchool' });
     assert.equal(inspected.models[0].id, model);
     assert.equal(inspected.sessions[0].contextCount, 0);
+    const originalConfig = settings.config;
+    const setupResult = await ui({ type: 'setupSchool', name: 'New dedicated session', model });
+    assert.equal(setupResult.ok, true, setupResult.error);
+    assert.equal(setupResult.setupProgress.phase, 'complete');
+    assert.equal(setupResult.config.session_name, setupSession.name);
+    assert.equal(setupResult.config.port, originalConfig.port);
+    assert.equal(setupResult.setupProgress.session_id, '9');
+    assert.deepEqual(setupSession, { id: '9', name: 'New dedicated session', model, contextCount: 0, prompt: '', temperature: 0.4 });
+    assert.equal(calls.filter(call => call.url.endsWith('/api/chat/completions')).length, 0, 'setup must not generate');
+    const setupCallCount = calls.length;
+    assert.equal((await ui({ type: 'setupSchool', name: 'New dedicated session', model })).ok, true);
+    assert.equal(calls.length, setupCallCount, 'completed setup must not issue new school mutations');
+    assert.equal((await ui({ type: 'saveSettings', config: originalConfig })).ok, true);
     assert.equal((await fetch(base_url + '/models')).status, 401);
     const catalog = await fetch(base_url + '/models', { headers });
     assert.equal(catalog.status, 200);
@@ -201,8 +229,8 @@ async function main() {
         assert.equal(completions.at(-1).body[key], undefined, key + ' reached the school');
       }
     }
-    for (const stream of [false, true]) {
-      const response = await fetch(base_url + '/chat/completions', { method: 'POST', headers, body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Reply INTEGRATION_OK' }], stream }) });
+    for (const ending of ['', ' CLEAN_EOF']) for (const stream of [false, true]) {
+      const response = await fetch(base_url + '/chat/completions', { method: 'POST', headers, body: JSON.stringify({ model, messages: [{ role: 'user', content: 'Reply INTEGRATION_OK' + ending }], stream }) });
       assert.equal(response.status, 200);
       if (stream) {
         const text = await response.text();
@@ -232,8 +260,8 @@ async function main() {
     assert.equal(calls.filter(call => call.url.endsWith('/api/chat/completions')).length, beforeFailedUpload, 'generation ran after upload failed');
     uploadFails = false;
     assert.equal((await fetch(base_url + '/responses', { method: 'POST', body: '{}' })).status, 401);
-    for (const stream of [false, true]) {
-      const response = await fetch(base_url + '/responses', { method: 'POST', headers, body: JSON.stringify({ model, store: false, input: 'Reply INTEGRATION_OK', stream }) });
+    for (const ending of ['', ' CLEAN_EOF']) for (const stream of [false, true]) {
+      const response = await fetch(base_url + '/responses', { method: 'POST', headers, body: JSON.stringify({ model, store: false, input: 'Reply INTEGRATION_OK' + ending, stream }) });
       assert.equal(response.status, 200, await response.clone().text());
       const result = await response.text();
       if (stream) {
@@ -250,6 +278,64 @@ async function main() {
     const vision = await fetch(base_url + '/responses', { method: 'POST', headers, body: JSON.stringify({ model, store: false, input: [{ role: 'user', content: [{ type: 'input_text', text: 'IMAGE_CASE' }, { type: 'input_image', image_url: imageURL }] }] }) });
     assert.equal(vision.status, 200, await vision.clone().text());
     assert.equal((await vision.json()).output.find(item => item.type === 'message').content[0].text, 'IMAGE_OK');
+    const omission = '[Earlier image omitted; image content is unavailable. Use only the existing text descriptions.]';
+    const caption = 'The earlier image shows a blue circle.';
+    const historyRequest = (endpoint, stream, variant = 'answered') => {
+      const responses = endpoint === '/responses';
+      const imagePart = responses ? { type: 'input_image', image_url: imageURL } : { type: 'image_url', image_url: { url: imageURL } };
+      const textPart = text => ({ type: responses ? 'input_text' : 'text', text });
+      const messages = [{ role: 'user', content: [textPart('Describe this image.'), imagePart] }];
+      if (variant !== 'unanswered') messages.push({ role: 'assistant', content: caption });
+      messages.push({ role: 'user', content: variant === 'new-image' ? [textPart('Describe the new image.'), imagePart] : 'Continue using the previous description.' });
+      return { model: textOnlyModel, stream, ...(responses ? { store: false, input: messages } : { messages }) };
+    };
+    const rejectUnsupportedImage = async (endpoint, request) => {
+      const before = calls.length;
+      const previousModel = schoolSession.model;
+      const response = await fetch(base_url + endpoint, { method: 'POST', headers, body: JSON.stringify(request) });
+      assert.equal(response.status, 400, await response.clone().text());
+      assert.match(response.headers.get('Content-Type'), /application\/json/);
+      const error = (await response.json()).error;
+      assert.equal(error.type, 'invalid_request_error');
+      assert.equal(error.code, 'unsupported_image_model');
+      assert.match(error.message, /image support/i);
+      assert.equal(schoolSession.model, previousModel, 'unsupported image changed the selected school model');
+      assert.ok(calls.slice(before).every(call => !/\/(?:saveSession|upload|completions)$/.test(call.url)), 'unsupported image caused a school mutation, upload, or generation');
+    };
+    // Capability errors travel through every extension world and stay JSON even for streaming clients.
+    for (const endpoint of ['/chat/completions', '/responses']) for (const stream of [false, true]) {
+      await rejectUnsupportedImage(endpoint, historyRequest(endpoint, stream));
+    }
+    const historySettings = await ui({ type: 'saveSettings', config: { omit_historical_images: true } });
+    assert.equal(historySettings.ok, true, historySettings.error);
+    assert.equal(historySettings.config.omit_historical_images, true);
+    assert.equal(historySettings.restartRequired, false);
+    assert.equal((await ui({ type: 'getSettings' })).config.omit_historical_images, true);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')).omit_historical_images, true);
+    for (const endpoint of ['/chat/completions', '/responses']) for (const stream of [false, true]) {
+      const before = calls.length;
+      const response = await fetch(base_url + endpoint, { method: 'POST', headers, body: JSON.stringify(historyRequest(endpoint, stream)) });
+      assert.equal(response.status, 200, await response.clone().text());
+      const result = await response.text();
+      assert.ok(result.includes('INTEGRATION_OK'));
+      if (stream) assert.ok(result.includes(endpoint === '/responses' ? 'response.completed' : 'data: [DONE]'));
+      const generated = calls.slice(before).filter(call => call.url.endsWith('/api/chat/completions'));
+      assert.equal(generated.length, 1, 'text continuation generated more than once');
+      assert.equal(schoolSession.model, textOnlyModel);
+      assert.deepEqual(generated[0].body.files, []);
+      assert.ok(generated[0].body.text.includes(omission), 'omission was not disclosed to the model');
+      assert.ok(generated[0].body.text.includes(caption), 'previous textual description was lost');
+      assert.ok(generated[0].body.text.includes('Continue using the previous description.'));
+      assert.equal(calls.slice(before).filter(call => call.url.endsWith('/api/common/upload')).length, 0, 'historical image was uploaded');
+      // Opt-in never drops current images or unanswered images in consecutive user turns.
+      await rejectUnsupportedImage(endpoint, historyRequest(endpoint, stream, 'new-image'));
+      await rejectUnsupportedImage(endpoint, historyRequest(endpoint, stream, 'unanswered'));
+    }
+    const strictSettings = await ui({ type: 'saveSettings', config: { omit_historical_images: false } });
+    assert.equal(strictSettings.ok, true, strictSettings.error);
+    assert.equal(strictSettings.config.omit_historical_images, false);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(directory, 'config.json'), 'utf8')).omit_historical_images, false);
+    await rejectUnsupportedImage('/chat/completions', historyRequest('/chat/completions', false));
     const parameters = { type: 'object', properties: { value: { type: 'integer' } }, required: ['value'], additionalProperties: false };
     const tools = [{ type: 'function', function: { name: 'double', description: 'Double a number', parameters, strict: true } }];
     const first = await fetch(base_url + '/chat/completions', { method: 'POST', headers, body: JSON.stringify({ model, messages: [{ role: 'user', content: 'TOOL_FIRST' }], tools, tool_choice: 'required' }) });
@@ -279,6 +365,42 @@ async function main() {
       if (valid) assert.deepEqual(JSON.parse(result.choices[0].message.content), { answer: 42 });
       else assert.ok(result.error);
     }
+    // Buffered tool/schema validation must also finish on clean school EOF.
+    for (const endpoint of ['/chat/completions', '/responses']) for (const stream of [false, true]) for (const kind of ['tool', 'schema']) {
+      const responses = endpoint === '/responses';
+      const prompt = (kind === 'tool' ? 'TOOL_FIRST' : 'SCHEMA_VALID') + ' CLEAN_EOF';
+      const request = { model, stream, ...(responses ? { store: false, input: prompt } : { messages: [{ role: 'user', content: prompt }] }) };
+      if (kind === 'tool') Object.assign(request, { tools: responses ? responseTools : tools, tool_choice: 'required' });
+      else if (responses) request.text = { format: { type: 'json_schema', name: 'answer', strict: true, schema } };
+      else request.response_format = { type: 'json_schema', json_schema: { name: 'answer', strict: true, schema } };
+      const response = await fetch(base_url + endpoint, { method: 'POST', headers, body: JSON.stringify(request) });
+      assert.equal(response.status, 200, await response.clone().text());
+      let result;
+      if (stream) {
+        const text = await response.text();
+        const frames = text.split('\n\n').map(frame => frame.split('\n').find(line => line.startsWith('data: '))).filter(Boolean).map(line => line.slice(6)).filter(data => data !== '[DONE]').map(JSON.parse);
+        assert.ok(frames.every(frame => !frame.error && frame.type !== 'response.failed'));
+        if (responses) {
+          assert.equal(frames.at(-1).type, 'response.completed');
+          result = frames.at(-1).response;
+        } else {
+          assert.ok(text.endsWith('data: [DONE]\n\n'));
+          assert.equal(frames.at(-1).choices[0].finish_reason, kind === 'tool' ? 'tool_calls' : 'stop');
+          result = { choices: [{ message: {
+            content: frames.map(frame => frame.choices[0].delta.content || '').join(''),
+            tool_calls: frames.flatMap(frame => frame.choices[0].delta.tool_calls || [])
+          } }] };
+        }
+      } else result = await response.json();
+      if (kind === 'tool') {
+        const call = responses ? result.output.find(item => item.type === 'function_call') : result.choices[0].message.tool_calls[0].function;
+        assert.equal(call.name, 'double');
+        assert.deepEqual(JSON.parse(call.arguments), { value: 7 });
+      } else {
+        const text = responses ? result.output.find(item => item.type === 'message').content[0].text : result.choices[0].message.content;
+        assert.deepEqual(JSON.parse(text), { answer: 42 });
+      }
+    }
     for (const stream of [false, true]) {
       const response = await fetch(base_url + '/chat/completions', { method: 'POST', headers, body: JSON.stringify({ model, messages: [{ role: 'user', content: 'TRUNCATE' }], stream }) });
       if (stream) {
@@ -287,12 +409,12 @@ async function main() {
         assert.ok(text.includes('TRUNCATED_CONTENT'));
         assert.ok(text.includes('event: error\n'));
         const frames = text.split('\n\n').map(frame => frame.split('\n').find(line => line.startsWith('data: '))).filter(Boolean).map(line => line.slice(6)).filter(data => data !== '[DONE]').map(JSON.parse);
-        assert.ok(frames.some(frame => /completion marker/.test(frame.error?.message || '')));
+        assert.ok(frames.some(frame => /incomplete SSE event/.test(frame.error?.message || '')));
         assert.ok(!frames.some(frame => frame.choices?.some(choice => choice.finish_reason === 'stop')));
       } else {
         assert.equal(response.status, 502);
         const body = await response.json();
-        assert.match(body.error.message, /completion marker/);
+        assert.match(body.error.message, /incomplete SSE event/);
         assert.equal(body.choices, undefined);
       }
     }
@@ -352,7 +474,7 @@ async function main() {
     const [code] = await exited;
     assert.equal(code, 0, errorOutput);
     assert.equal(errorOutput, '');
-    console.log('native integration passed: real Go process, all extension worlds, verified model switching, token-limit compatibility and unknown usage, chunked PNG upload, upload failure without retry, Responses JSON/SSE/vision, tool round trip, JSON Schema validation, settings/key rotation and clean EOF');
+    console.log('native integration passed: real Go process, all extension worlds, verified model switching, token-limit compatibility and unknown usage, chunked PNG upload, upload failure without retry, image capability errors and opt-in historical omission, Responses JSON/SSE/vision, tool round trip, JSON Schema validation, optional school DONE with clean EOF, incomplete-frame errors, settings/key rotation and host EOF');
   } finally {
     clearTimeout(deadline);
     if (child.exitCode === null && child.signalCode === null) { const stopped = once(child, 'exit'); child.kill(); await stopped; }

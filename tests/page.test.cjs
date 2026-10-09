@@ -17,12 +17,20 @@ const sse = (wire) => {
     controller.close();
   }}), { headers: { 'Content-Type': 'text/event-stream' } });
 };
-async function run(op, responses, body = payload, cancel = false) {
+const flush = () => new Promise(resolve => setImmediate(resolve));
+function mount(responses, cancel = false) {
   const events = [], calls = [];
-  let listener, finish;
-  const done = new Promise(resolve => { finish = resolve; });
+  const pending = new Map();
+  let listener;
   const window = {
-    postMessage(event) { events.push(event); if (event.kind === 'done') finish(); },
+    postMessage(event) {
+      events.push(event);
+      if (event.kind === 'done') {
+        const finish = pending.get(event.job);
+        pending.delete(event.job);
+        finish?.();
+      }
+    },
     addEventListener(type, callback) { assert.equal(type, 'message'); listener = callback; },
     async fetch(url, options) {
       calls.push({ url, ...options, body: options.body instanceof FormData ? options.body : options.body && JSON.parse(options.body) });
@@ -30,7 +38,8 @@ async function run(op, responses, body = payload, cancel = false) {
       assert.equal(options.credentials, 'include');
       const next = responses.shift();
       assert.ok(next, 'unexpected school request');
-      const cancelPath = { upload: '/api/common/upload', catalog: '/api/chat/config?lang=en', save: '/api/chat/saveSession' }[cancel];
+      const cancelPath = { upload: '/api/common/upload', catalog: '/api/chat/config?lang=en',
+        session: '/api/chat/session?lang=en', save: '/api/chat/saveSession' }[cancel];
       if (cancelPath && url.endsWith(cancelPath)) queueMicrotask(() => {
         listener({ source: window, data: { source: 'xipu-bridge', type: 'cancel', job: 'test-job' } });
       });
@@ -45,17 +54,298 @@ async function run(op, responses, body = payload, cancel = false) {
     }}}}) },
     localStorage: { getItem: () => 'en' }
   });
-  const message = { source: 'xipu-bridge', type: 'req', job: 'test-job', op, payload: body };
-  listener({ source: {}, data: message });
-  assert.equal(calls.length, 0, 'cross-window requests must be ignored');
-  listener({ source: window, origin: 'https://xipuai.xjtlu.edu.cn', data: message });
-  if (cancel === true) listener({ source: window, data: { ...message, type: 'cancel' } });
+  return {
+    events, calls,
+    request(op, body = payload, job = 'test-job') {
+      const done = new Promise(resolve => pending.set(job, resolve));
+      const message = { source: 'xipu-bridge', type: 'req', job, op, payload: body };
+      const count = calls.length;
+      listener({ source: {}, data: message });
+      assert.equal(calls.length, count, 'cross-window requests must be ignored');
+      listener({ source: window, origin: 'https://xipuai.xjtlu.edu.cn', data: message });
+      return done;
+    },
+    cancel(job = 'test-job') { listener({ source: window, data: { source: 'xipu-bridge', type: 'cancel', job } }); }
+  };
+}
+async function run(op, responses, body = payload, cancel = false) {
+  const h = mount(responses, cancel);
+  const done = h.request(op, body);
+  if (cancel === true) h.cancel();
   await done;
+  await flush();
+  const { events, calls } = h;
   assert.equal(responses.length, 0);
   assert.ok(!JSON.stringify(events).includes('synthetic-school-token'), 'school token leaked');
   return { events, calls, error: events.at(-1).message };
 }
+
+async function setupChecks() {
+  const name = 'New bridge session';
+  const create = { name, model };
+  const resume = { ...create, session_id: 73 };
+  const catalog = () => json({ code: 0, data: { models: [{ value: model }] } });
+  const initial = { id: resume.session_id, name, model: 'initial-model', contextCount: 5,
+    prompt: 'Synthetic instruction', temperature: 0.5, maxToken: 128, plugins: ['synthetic-plugin'], extra: { keep: true } };
+  const configured = { ...initial, model, contextCount: 0, prompt: '' };
+  const resultOf = result => JSON.parse(JSON.stringify(result.events.find(event => event.kind === 'result')?.result));
+  const assertFailure = result => {
+    assert.ok(result.error);
+    assert.equal(result.events.filter(event => event.kind === 'result').length, 0);
+    assert.ok(result.calls.every(call => !/completions|upload|delSession/.test(call.url)), 'setup never generates, uploads or deletes');
+  };
+
+  for (const [code, data] of [[0, { ...initial, token: 'synthetic-school-token' }], ['0', { id: 'new-opaque-id' }]]) {
+    const created = await run('setup_create', [catalog(), list([session]), json({ code, data })], create);
+    assert.equal(created.error, undefined);
+    assert.deepEqual(resultOf(created), { session: { id: data.id, name } }, 'return only the confirmed recovery identity');
+    assert.deepEqual(created.calls.map(call => new URL(call.url).pathname), [
+      '/jmapi/api/chat/config', '/jmapi/api/chat/session', '/jmapi/api/chat/saveSession'
+    ], 'do not risk losing the created ID to another request');
+    assert.equal(created.calls[2].method, 'POST');
+    assert.equal(created.calls[2].headers['Content-Type'], 'application/json');
+    assert.deepEqual(created.calls[2].body, { name, lang: 'en' }, 'create using the official minimal body');
+    assert.ok(!JSON.stringify(created.events).includes('Synthetic instruction'));
+  }
+  for (const field of ['name', 'model']) {
+    for (const value of [undefined, null, false, 1, '', ' ', ' padded', 'padded ', 'x'.repeat(201), 'line\nbreak', 'tab\t', 'null\0', 'delete\x7f']) {
+      for (const op of ['setup_create', 'setup_configure', 'setup_check']) {
+        const failed = await run(op, [], { ...resume, [field]: value });
+        assertFailure(failed);
+        assert.equal(failed.calls.length, 0, 'invalid setup fields fail locally');
+      }
+    }
+  }
+  for (const session_id of [undefined, null, 0, -1, 0.1, Number.MAX_SAFE_INTEGER + 1, '', ' ', ' 73', false, {}]) {
+    const failed = await run('setup_configure', [], { ...resume, session_id });
+    assertFailure(failed);
+    assert.equal(failed.calls.length, 0);
+  }
+  for (const op of ['setup_create', 'setup_configure']) {
+    for (const body of [null, {}, { code: 0, data: { models: {} } }, { code: 0, data: { models: ['unknown-model'] } }]) {
+      const failed = await run(op, [json(body)], resume);
+      assertFailure(failed);
+      assert.equal(failed.calls.length, 1, 'catalog failures must not mutate sessions');
+    }
+    for (const data of [null, {}, [null], [{ ...session, id: null }], [{ id: 42 }]]) {
+      const failed = await run(op, [catalog(), list(data)], resume);
+      assertFailure(failed);
+      assert.equal(failed.calls.length, 2, 'malformed lists must not mutate sessions');
+    }
+  }
+  for (const existing of [[initial], [configured], [initial, initial]]) {
+    const failed = await run('setup_create', [catalog(), list(existing)], create);
+    assertFailure(failed);
+    assert.match(failed.error, /already has this name/);
+    assert.equal(failed.calls.length, 2, 'never overwrite a pre-existing same-name session');
+  }
+  for (const data of [null, [], {}, { id: 0 }, { id: ' ' }, { id: 73, name: 'Different name' }, { id: 73, name: null },
+    { id: session.id }, { id: String(session.id) }]) {
+    const failed = await run('setup_create', [catalog(), list([session]), json({ code: 0, data })], create);
+    assertFailure(failed);
+    assert.equal(failed.calls.length, 3, 'an unconfirmed identity never triggers another mutation');
+  }
+  for (const op of ['setup_create', 'setup_configure']) {
+    for (const response of [json({ code: 23 }), json({ code: 429 }, 429), json({ code: 0 }, 429),
+      json(null), json({}), json([]), new Response('invalid JSON')]) {
+      const failed = await run(op, [catalog(), list(op === 'setup_create' ? [] : [initial]), response], resume);
+      assertFailure(failed);
+      assert.equal(failed.calls.length, 3, 'failed mutations are never retried or followed by another request');
+    }
+  }
+  for (const code of [0, '0']) {
+    const completed = await run('setup_configure', [catalog(), list([initial]), json({ code }), list([configured])], resume);
+    assert.equal(completed.error, undefined);
+    assert.deepEqual(completed.calls[2].body, { ...initial, model, contextCount: 0, prompt: '', lang: 'en' },
+      'clear only the setup-owned fields and preserve unrelated configuration');
+    assert.deepEqual(resultOf(completed), { session: { id: initial.id, name, model, contextCount: 0 } });
+    assert.equal(completed.calls.length, 4);
+    assert.ok(!JSON.stringify(completed.events).includes('Synthetic instruction'));
+  }
+  const recovered = await run('setup_configure', [catalog(), list([configured])], resume);
+  assert.equal(recovered.error, undefined);
+  assert.deepEqual(resultOf(recovered), { session: { id: initial.id, name, model, contextCount: 0 } });
+  assert.equal(recovered.calls.length, 2, 'a verified configuration can resume without another save');
+  const opaque = await run('setup_configure', [catalog(), list([{ ...configured, id: 'new-opaque-id' }])],
+    { ...resume, session_id: 'new-opaque-id' });
+  assert.equal(opaque.error, undefined);
+  for (const [session_id, listedID, savedID] of [[73, '73', '73'], ['73', 73, 73], [73, 73, '73'], ['73', '73', 73]]) {
+    const listed = { ...initial, id: listedID };
+    const completed = await run('setup_configure', [catalog(), list([listed]), json({ code: 0 }), list([{ ...configured, id: savedID }])], { ...resume, session_id });
+    assert.equal(completed.error, undefined);
+    assert.equal(completed.calls[2].body.id, listedID, 'save the fetched ID without converting it');
+    assert.equal(completed.calls[2].body.contextCount, 0, 'configure a newly created session with default context 5');
+    assert.equal(resultOf(completed).session.id, savedID, 'return the verified readback representation');
+    const recovered = await run('setup_configure', [catalog(), list([{ ...configured, id: listedID }])], { ...resume, session_id });
+    assert.equal(recovered.error, undefined);
+    assert.equal(recovered.calls.length, 2, 'equivalent IDs do not require another save');
+  }
+  for (const [sessions, error] of [[[], /missing or has been renamed/], [[{ ...initial, id: 74 }], /different ID/],
+    [[{ ...initial, name: 'Renamed session' }], /missing or has been renamed/], [[initial, initial], /Multiple conversations/],
+    [[initial, { ...initial, name: 'Other name' }], /duplicate conversation ID/],
+    [[initial, { ...initial, id: String(initial.id), name: 'Other name' }], /duplicate conversation ID/],
+    ...['073', '7.3e1', '73.0', 'different-opaque-id'].map(id => [[{ ...initial, id }], /different ID/])]) {
+    const failed = await run('setup_configure', [catalog(), list(sessions)], resume);
+    assertFailure(failed);
+    assert.match(failed.error, error);
+    assert.equal(failed.calls.length, 2, 'resume must never create a missing session or overwrite another identity');
+  }
+  for (const sessions of [[], [{ ...configured, id: 74 }], [{ ...configured, id: '073' }],
+    [{ ...configured, name: 'Renamed session' }], [configured, configured],
+    [configured, { ...configured, id: String(initial.id), name: 'Other name' }],
+    [{ ...configured, model: 'other-model' }], [{ ...configured, contextCount: 1 }], [{ ...configured, contextCount: '0' }],
+    ...['Synthetic instruction', null, undefined].map(prompt => [{ ...configured, prompt }])]) {
+    const failed = await run('setup_configure', [catalog(), list([initial]), json({ code: 0 }), list(sessions)], resume);
+    assertFailure(failed);
+    assert.equal(failed.calls.length, 4, 'readback failure must not retry or undo the accepted update');
+    assert.equal(failed.calls.filter(call => call.method === 'POST').length, 1);
+  }
+  for (const op of ['setup_create', 'setup_configure']) {
+    for (const cancelAt of ['catalog', 'session']) {
+      const responses = [catalog()];
+      if (cancelAt === 'session') responses.push(list(op === 'setup_create' ? [] : [initial]));
+      const cancelled = await run(op, responses, resume, cancelAt);
+      assertFailure(cancelled);
+      assert.ok(cancelled.calls.every(call => !call.method), 'cancellation before saving must not mutate');
+    }
+    const cancelled = await run(op, [catalog(), list(op === 'setup_create' ? [] : [initial]), ({ signal }) => new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new Error('setup save cancelled')), { once: true });
+    })], resume, 'save');
+    assertFailure(cancelled);
+    assert.equal(cancelled.error, 'The school request was cancelled.');
+    assert.equal(cancelled.calls.length, 3);
+  }
+  const acknowledged = await run('setup_create', [catalog(), list([]), json({ code: 0, data: { id: 73 } })], create, 'save');
+  assertFailure(acknowledged);
+  assert.equal(acknowledged.events.at(-1).result, undefined, 'a creation acknowledgement received after cancellation remains unknown');
+  const cancelledConfiguration = await run('setup_configure', [catalog(), list([initial]), json({ code: 0 })], resume, 'save');
+  assertFailure(cancelledConfiguration);
+  assert.equal(cancelledConfiguration.calls.length, 3, 'cancellation after an accepted update stops verification without rollback');
+}
+
+async function recoveryChecks() {
+  const request = { name: session.name, model };
+  const catalog = () => json({ code: 0, data: { models: [model] } });
+  const resultOf = result => JSON.parse(JSON.stringify(result.events.find(event => event.kind === 'result')?.result));
+  for (const status of [502, 503, 504]) {
+    for (const before of [[], [catalog()]]) {
+      const failed = await run('setup_create', [...before, new Response('private gateway details', { status })], request);
+      assert.match(failed.error, new RegExp(`temporarily unavailable \\(HTTP ${status}\\)`));
+      assert.match(failed.error, /no automatic retry/);
+      assert.deepEqual(JSON.parse(JSON.stringify(failed.events.at(-1).result)), { notCreated: true });
+      assert.ok(failed.calls.every(call => !call.method), 'safe failure metadata requires no attempted creation');
+      assert.ok(!JSON.stringify(failed.events).includes('private gateway details'));
+    }
+    const unknown = await run('setup_create', [catalog(), list([]), json({ msg: 'private gateway details' }, status)], request);
+    assert.match(unknown.error, new RegExp(`HTTP ${status}`));
+    assert.equal(unknown.events.at(-1).result, undefined, 'a failed create POST does not prove that nothing was created');
+    assert.equal(unknown.calls.length, 3, 'never retry a failed create POST');
+  }
+  const thrown = await run('setup_create', [catalog(), list([]), () => { throw new Error('Synthetic fetch failure'); }], request);
+  assert.equal(thrown.events.at(-1).result, undefined, 'a synchronous fetch failure after attempting the POST also remains unknown');
+  const invalid = await run('setup_create', [], { ...request, name: '' });
+  assert.equal(invalid.events.at(-1).result.notCreated, true);
+  for (const body of [request, { ...request, session_id: session.id }, { ...request, session_id: String(session.id) }]) {
+    const checked = await run('setup_check', [list([{ ...session, model: 'current-model', contextCount: 5,
+      prompt: 'Private synthetic prompt', history: ['Private synthetic history'], token: 'synthetic-school-token' }])], body);
+    assert.equal(checked.error, undefined);
+    assert.deepEqual(resultOf(checked), { session: { ...session, model: 'current-model', contextCount: 5, promptEmpty: false } });
+    assert.equal(checked.calls.length, 1);
+    assert.ok(checked.calls[0].url.endsWith('/api/chat/session?lang=en'));
+    assert.equal(checked.calls[0].method, undefined, 'recovery checks must neither read the catalog nor mutate the session');
+    assert.ok(!JSON.stringify(checked.events).includes('Private synthetic'));
+    const missing = await run('setup_check', [list([])], body);
+    assert.deepEqual(resultOf(missing), { session: null });
+  }
+  for (const prompt of ['', null, undefined, ' ']) {
+    const checked = await run('setup_check', [list([{ ...session, prompt }])], request);
+    assert.equal(resultOf(checked).session.promptEmpty, prompt === '');
+  }
+  const nonnumericContext = await run('setup_check', [list([{ ...session, contextCount: '0' }])], request);
+  assert.equal(resultOf(nonnumericContext).session.contextCount, null, 'do not treat malformed context as verified zero');
+  for (const session_id of [null, 0, false, {}, Number.MAX_SAFE_INTEGER + 1]) {
+    const failed = await run('setup_check', [], { ...request, session_id });
+    assert.ok(failed.error);
+    assert.equal(failed.events.at(-1).result, undefined);
+  }
+  for (const [sessions, body] of [
+    [[session, session], request],
+    [[session, { ...session, id: String(session.id), name: 'Other name' }], request],
+    [[session], { ...request, session_id: '042' }],
+    [[session], { ...request, session_id: 43 }],
+    [[{ ...session, id: null }], request],
+    [[{ ...session, model: { private: 'Private synthetic field' } }], request]
+  ]) {
+    const failed = await run('setup_check', [list(sessions)], body);
+    assert.ok(failed.error);
+    assert.equal(failed.events.filter(event => event.kind === 'result').length, 0);
+    assert.equal(failed.events.at(-1).result, undefined);
+    assert.equal(failed.calls.length, 1);
+    assert.ok(!JSON.stringify(failed.events).includes('Private synthetic field'));
+  }
+}
+
+async function cancellationChecks() {
+  const setup = { name: session.name, model };
+  const catalog = () => json({ code: 0, data: { models: [model] } });
+  const cases = [
+    { op: 'models', before: [], late: catalog },
+    { op: 'inspect', before: [], late: catalog },
+    { op: 'setup_check', before: [], late: () => list(), body: setup },
+    { op: 'setup_create', before: [], late: catalog, body: setup, notCreated: true },
+    { op: 'setup_create', before: [catalog(), list([])], late: () => json({ code: 0, data: { id: 73 } }), body: setup },
+    { op: 'setup_configure', before: [catalog(), list([{ ...session, contextCount: 5 }])],
+      late: () => json({ code: 0 }), body: { ...setup, session_id: session.id } },
+    { op: 'chat', before: [list()], late: () => json({ code: 0, type: 'object', data: { aiText: 'Late result' } }) }
+  ];
+  for (const item of cases) {
+    let releaseOld, releaseNew;
+    const h = mount([...item.before, () => new Promise(resolve => { releaseOld = resolve; }),
+      () => new Promise(resolve => { releaseNew = resolve; })]);
+    const first = h.request(item.op, item.body);
+    await flush();
+    assert.equal(typeof releaseOld, 'function');
+    h.cancel();
+    assert.equal(h.events.filter(event => event.kind === 'done').length, 1, 'abort settles immediately when fetch ignores its signal');
+    await first;
+    const cancelled = h.events.at(-1);
+    assert.equal(cancelled.message, 'The school request was cancelled.');
+    assert.equal(cancelled.result?.notCreated, item.notCreated);
+    const afterCancel = h.events.length;
+    const recovered = h.request('setup_check', setup);
+    await flush();
+    assert.equal(typeof releaseNew, 'function', 'a cancelled request must release its page slot');
+    releaseOld(item.late());
+    await flush();
+    assert.equal(h.events.length, afterCancel, 'late output must not escape into a new task with the same job ID');
+    assert.equal(h.calls.length, item.before.length + 2, 'aborted work must not make subsequent requests');
+    await h.request('models', {}, 'overlap');
+    assert.match(h.events.at(-1).message, /another school request is active/, 'late settlement must not release the new task slot');
+    releaseNew(list([]));
+    await recovered;
+    assert.equal(h.events.filter(event => event.job === 'test-job' && event.kind === 'done').length, 2);
+    assert.equal(h.events.filter(event => event.job === 'test-job' && event.kind === 'result').length, 1);
+    assert.equal(h.events.find(event => event.kind === 'result').result.session, null);
+    assert.ok(!JSON.stringify(h.events).includes('synthetic-school-token'));
+  }
+  let readerCancelled = false;
+  const stream = new ReadableStream({ cancel() { readerCancelled = true; } });
+  const h = mount([list(), new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } }), list([])]);
+  const first = h.request('chat');
+  await flush();
+  h.cancel();
+  assert.equal(h.events.at(-1).kind, 'done');
+  await first;
+  await flush();
+  assert.equal(readerCancelled, true, 'abort releases an active SSE reader');
+  await h.request('setup_check', setup);
+  assert.equal(h.events.at(-1).message, undefined);
+}
+
 async function main() {
+  await setupChecks();
+  await recoveryChecks();
+  await cancellationChecks();
   const models = await run('models', [json({ code: 0, data: { models: [{ value: model }] } })]);
   assert.equal(models.events[0].result.data.models[0].value, model);
   assert.ok(models.calls[0].url.endsWith('/api/chat/config?lang=en'));
@@ -70,7 +360,7 @@ async function main() {
   const cancelled = await run('models', [({ signal }) => new Promise((resolve, reject) => {
     signal.addEventListener('abort', () => reject(new Error('cancelled')), { once: true });
   })], {}, true);
-  assert.equal(cancelled.error, 'cancelled');
+  assert.equal(cancelled.error, 'The school request was cancelled.');
   assert.equal(cancelled.calls.length, 1);
 
   // A multibyte character and CRLF separators are split across every byte boundary.
@@ -115,11 +405,11 @@ async function main() {
   const httpError = await run('models', [json({ code: '403', msg: {}, data: 'private response body' }, 403)]);
   assert.equal(httpError.error, 'Load model catalog: HTTP 403 (school code 403)');
   const httpWithoutCode = await run('chat', [json({ data: 'private response body' }, 503)]);
-  assert.equal(httpWithoutCode.error, 'Read school session: HTTP 503');
+  assert.equal(httpWithoutCode.error, 'Read school session: The school service is temporarily unavailable (HTTP 503). Try again later; no automatic retry was made.');
   const nonnumericCode = await run('models', [json({ code: 'synthetic-school-token', message: {} })]);
   assert.equal(nonnumericCode.error, 'Load model catalog: The school API rejected the request', 'do not expose unknown code values');
   const invalidJSON = await run('models', [new Response('private response body', { status: 502 })]);
-  assert.equal(invalidJSON.error, 'Load model catalog: The school API returned invalid JSON (HTTP 502). Check the logged-in tab.');
+  assert.equal(invalidJSON.error, 'Load model catalog: The school service is temporarily unavailable (HTTP 502). Try again later; no automatic retry was made.');
   for (const code of [0, '0']) {
     const switched = await run('chat', [list([previous]), switchCatalog(), json({ code }), list([updated]), reply()]);
     assert.equal(switched.error, undefined);
@@ -138,7 +428,13 @@ async function main() {
     json({ code: 0, data: { models: [model] } }), json({ code: 0 }), list([{ ...updated, id: opaqueID }]), reply()]);
   assert.equal(stringID.error, undefined);
   assert.equal(stringID.calls.at(-1).body.sessionId, opaqueID);
-  for (const invalid of [[], [{ ...updated, id: 43 }], [{ ...updated, id: '42' }], [{ ...updated, name: 'Renamed session' }],
+  for (const [before, after] of [[42, '42'], ['42', 42]]) {
+    const switched = await run('chat', [list([{ ...previous, id: before }]), switchCatalog(), json({ code: 0 }), list([{ ...updated, id: after }]), reply()]);
+    assert.equal(switched.error, undefined);
+    assert.equal(switched.calls[2].body.id, before);
+    assert.equal(switched.calls.at(-1).body.sessionId, after);
+  }
+  for (const invalid of [[], [{ ...updated, id: 43 }], [{ ...updated, id: '042' }], [{ ...updated, name: 'Renamed session' }],
     [{ ...updated, model: previous.model }], [{ ...updated, contextCount: 1 }], [updated, updated]]) {
     const rejected = await run('chat', [list([previous]), switchCatalog(), json({ code: 0 }), list(invalid)]);
     assert.ok(rejected.error, 'reject a changed or ambiguous session after saving');
@@ -171,7 +467,7 @@ async function main() {
   const cancelledSave = await run('chat', [list([previous]), switchCatalog(), ({ signal }) => new Promise((resolve, reject) => {
     signal.addEventListener('abort', () => reject(new Error('save cancelled')), { once: true });
   })], payload, 'save');
-  assert.equal(cancelledSave.error, 'save cancelled');
+  assert.equal(cancelledSave.error, 'The school request was cancelled.');
   assert.equal(cancelledSave.calls.length, 3);
   const missing = await run('chat', [], { model, text: 'test' });
   assert.ok(missing.error.includes('dedicated'));
@@ -183,11 +479,35 @@ async function main() {
   const malformed = await run('chat', [list(), sse('data: not-json\n\n')]);
   assert.ok(malformed.error.includes('invalid SSE'));
   const trailing = await run('chat', [list(), sse('data: {"type":"string","data":"final"}')]);
-  assert.equal(trailing.events.find(x => x.event)?.event.data, 'final');
-  assert.match(trailing.error, /ended before its completion marker/);
-  const truncated = await run('chat', [list(), sse('data: {"type":"string","data":"partial"}\n\n')]);
-  assert.equal(truncated.events.find(x => x.event)?.event.data, 'partial');
-  assert.match(truncated.error, /ended before its completion marker/);
+  assert.equal(trailing.events.find(x => x.event), undefined, 'unterminated data must not be emitted');
+  assert.match(trailing.error, /incomplete SSE event/);
+  for (const ending of ['\n\n', '\r\n\r\n', '\r\r']) {
+    const clean = await run('chat', [list(), sse('data: {"type":"string","data":"complete"}' + ending)]);
+    assert.equal(clean.error, undefined, 'the school permits clean EOF without a sentinel');
+    assert.equal(clean.events.find(x => x.event)?.event.data, 'complete');
+  }
+  for (const tail of ['data: {"type":"string","data":"unfinished"}', 'data: {"type":"string","data":"unfinished"}\n', 'data: {"type":']) {
+    const truncated = await run('chat', [list(), sse('data: {"type":"string","data":"partial"}\n\n' + tail)]);
+    assert.equal(truncated.events.find(x => x.event)?.event.data, 'partial');
+    assert.match(truncated.error, /incomplete SSE event/);
+    assert.equal(truncated.events.filter(x => x.kind === 'event').length, 1);
+  }
+  for (const ending of ['data: [DONE]', 'data: [DONE]\n']) {
+    const explicit = await run('chat', [list(), sse('data: {"type":"string","data":"complete"}\n\n' + ending)]);
+    assert.equal(explicit.error, undefined, 'an explicit marker also confirms EOF without a trailing separator');
+  }
+  for (const tail of [': heartbeat', 'id: next-record', 'event: message']) {
+    const metadata = await run('chat', [list(), sse('data: {"type":"string","data":"complete"}\n\n' + tail)]);
+    assert.equal(metadata.error, undefined, 'trailing control lines without data do not form an incomplete message');
+    assert.equal(metadata.events.filter(x => x.kind === 'event').length, 1);
+  }
+  const lateError = await run('chat', [list(), sse('data: {"type":"string","data":"partial"}\n\ndata: {"code":23,"msg":"upstream failed"}\n\n')]);
+  assert.equal(lateError.error, 'upstream failed');
+  const readFailure = new Response(new ReadableStream({ start(controller) {
+    controller.enqueue(new TextEncoder().encode('data: {"type":"string","data":"partial"}\n\n'));
+  }, pull(controller) { controller.error(new Error('Synthetic stream read failure')); } }), { headers: { 'Content-Type': 'text/event-stream' } });
+  const interrupted = await run('chat', [list(), readFailure]);
+  assert.equal(interrupted.error, 'Synthetic stream read failure');
   // One large value and empty data lines exercise the cap without millions of stream chunks.
   const limit = 1024 * 1024;
   const largeText = 'x'.repeat(limit - 2 - JSON.stringify({ type: 'string', data: '' }).length);
@@ -250,6 +570,8 @@ async function main() {
   assert.equal(failedSecondUpload.calls.length, 4, 'stop on first failed upload without guessing a remote cleanup endpoint');
   const unsupported = await run('chat', [catalog(false)], imagePayload);
   assert.match(unsupported.error, /does not advertise image support/);
+  assert.match(unsupported.error, /conversation history/);
+  assert.equal(unsupported.events.at(-1).code, 'unsupported_image_model');
   assert.equal(unsupported.calls.length, 1);
   const unsafeImageSession = await run('chat', [catalog(), list([{ ...session, contextCount: 1 }])], imagePayload);
   assert.match(unsafeImageSession.error, /Context Count 0/);
@@ -262,7 +584,7 @@ async function main() {
   const abortedUpload = await run('chat', [catalog(), list(), ({ signal }) => new Promise((resolve, reject) => {
     signal.addEventListener('abort', () => reject(new Error('upload cancelled')), { once: true });
   })], imagePayload, 'upload');
-  assert.equal(abortedUpload.error, 'upload cancelled');
+  assert.equal(abortedUpload.error, 'The school request was cancelled.');
   assert.equal(abortedUpload.calls.length, 3);
   const large = Buffer.alloc(9 * 1024 * 1024); imageBytes.copy(large);
   for (const images of [null, [image, image, image, image, image], [{ ...image, mime: 'image/svg+xml' }], [{ ...image, data: '!!!!' }], [{ ...image, data: Buffer.from('not a PNG').toString('base64') }], [{ ...image, data: 'A'.repeat(Math.ceil(10 * 1024 * 1024 / 3) * 4 + 4) }], [{ ...image, data: large.toString('base64') }, { ...image, data: large.toString('base64') }]]) {
@@ -270,6 +592,6 @@ async function main() {
     assert.ok(invalid.error);
     assert.equal(invalid.calls.length, 0, 'invalid images must fail before school requests');
   }
-  console.log('page checks passed: verified model switching, session guards, chunked SSE, JSON, image upload, cancellation, no retry, token containment');
+  console.log('page checks passed: recoverable setup, verified model switching, session guards, chunked SSE, JSON, image upload, cancellation, no retry, token containment');
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

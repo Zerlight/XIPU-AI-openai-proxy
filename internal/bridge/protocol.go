@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 )
 
@@ -45,6 +46,27 @@ func (item *message) UnmarshalJSON(raw []byte) error {
 }
 
 func contentParts(raw json.RawMessage, imageURLs *[]string) (string, error) {
+	return renderContentParts(raw, imageURLs, false, 4)
+}
+
+const omittedImageText = "[Earlier image omitted; image content is unavailable. Use only the existing text descriptions.]"
+
+func validateOmittedImageURL(raw string) error {
+	if strings.HasPrefix(raw, "data:") {
+		header, encoded, ok := strings.Cut(raw[5:], ",")
+		if !ok || !strings.HasSuffix(header, ";base64") || !supportedImageMIME(strings.TrimSuffix(header, ";base64")) || encoded == "" {
+			return errors.New("Historical image must use a supported, nonempty base64 data URL")
+		}
+		return nil
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || validateImageURL(parsed) != nil {
+		return errors.New("Historical image URL must be public HTTPS without credentials")
+	}
+	return nil
+}
+
+func renderContentParts(raw json.RawMessage, imageURLs *[]string, omitImages bool, imageLimit int) (string, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return "", nil
 	}
@@ -89,7 +111,14 @@ func contentParts(raw json.RawMessage, imageURLs *[]string) (string, error) {
 			if url == "" {
 				return "", errors.New("Image URL is required")
 			}
-			if len(*imageURLs) >= 4 {
+			if omitImages {
+				if err := validateOmittedImageURL(url); err != nil {
+					return "", err
+				}
+				texts = append(texts, omittedImageText)
+				continue
+			}
+			if imageLimit > 0 && len(*imageURLs) >= imageLimit {
 				return "", errors.New("At most 4 images are supported")
 			}
 			*imageURLs = append(*imageURLs, url)
@@ -106,10 +135,28 @@ func contentText(raw json.RawMessage) (string, error) {
 }
 
 func buildTranscript(messages []message) (string, []string, error) {
+	return renderTranscript(messages, false, 4)
+}
+
+func renderTranscript(messages []message, omitHistoricalImages bool, imageLimit int) (string, []string, error) {
+	omitBefore := -1
+	if omitHistoricalImages {
+		latestUser := -1
+		for i, item := range messages {
+			if item.Role == "user" || item.Role == "" {
+				latestUser = i
+			}
+		}
+		for i := 0; i < latestUser; i++ {
+			if messages[i].Role == "assistant" {
+				omitBefore = i
+			}
+		}
+	}
 	var blocks, roles, images []string
 	pending := map[string]bool{}
 	seen := map[string]bool{}
-	for _, item := range messages {
+	for index, item := range messages {
 		role := item.Role
 		if role == "" {
 			role = "user"
@@ -122,7 +169,7 @@ func buildTranscript(messages []message) (string, []string, error) {
 		if role != "tool" && len(pending) > 0 {
 			return "", nil, errors.New("Every tool call must have a matching result before the next message")
 		}
-		text, err := contentParts(item.Content, &images)
+		text, err := renderContentParts(item.Content, &images, index < omitBefore, imageLimit)
 		if err != nil {
 			return "", nil, err
 		}

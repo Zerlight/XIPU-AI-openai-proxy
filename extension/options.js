@@ -2,7 +2,8 @@
   "use strict";
   const defaults = {
     session_name: "XIPU AI Bridge", port: 8765, default_model: "", thinking: "minimal", online: false,
-    chat_timeout_seconds: 300, model_timeout_seconds: 30, idle_timeout_seconds: 90, include_reasoning: true
+    chat_timeout_seconds: 300, model_timeout_seconds: 30, idle_timeout_seconds: 90, include_reasoning: true,
+    omit_historical_images: false
   };
   const numeric = { port: [1, 65535], chat_timeout_seconds: [10, 1800], model_timeout_seconds: [5, 120], idle_timeout_seconds: [5, 600] };
   const labels = { ready: ["Connected", "success"], busy: ["Request in progress", "info"], offline: ["Offline", "secondary"], "no-tab": ["Open XIPU AI", "warning"] };
@@ -264,6 +265,10 @@
   }
   selectSection("general");
   element("extension-id").textContent = chrome.runtime.id;
+  element("setup").addEventListener("click", async () => {
+    try { await BridgeUI.request("openSetup"); }
+    catch (error) { message("error", error.message || "Could not open setup."); }
+  });
   element("settings-form").addEventListener("submit", save);
   element("settings-form").addEventListener("input", markDirty);
   element("reload").addEventListener("click", () => loadSettings(true));
