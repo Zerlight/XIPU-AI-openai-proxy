@@ -8,7 +8,7 @@ const html = fs.readFileSync(path.join(root, "options.html"), "utf8");
 const shared = fs.readFileSync(path.join(root, "ui-settings.js"), "utf8");
 const source = fs.readFileSync(path.join(root, "options.js"), "utf8");
 const tick = () => new Promise(resolve => setImmediate(resolve));
-const initialConfig = () => ({ session_name: "Native session", port: 9876, default_model: "model-a", thinking: "low", online: false, chat_timeout_seconds: 300, model_timeout_seconds: 30, idle_timeout_seconds: 90, include_reasoning: true, omit_historical_images: false });
+const initialConfig = () => ({ session_name: "Native session", port: 9876, default_model: "model-a", thinking: "low", online: false, chat_timeout_seconds: 300, model_timeout_seconds: 30, idle_timeout_seconds: 90, include_reasoning: true, omit_historical_images: false, debug_capture_requests: false, debug_web_session: false });
 
 function mount(status = "ready") {
   let document;
@@ -173,6 +173,35 @@ test("image history reads the saved preference and defaults missing values to of
   delete ui.state.config.omit_historical_images;
   await ui.click("reload");
   assert.equal(ui.get("omit_historical_images").checked, false);
+  assert.equal(ui.get("save").disabled, true);
+});
+
+test("debug switches save independently and default to off on reset or older settings", async () => {
+  const ui = mount(); await tick();
+  await ui.click("tab-advanced");
+  assert.equal(ui.get("panel-advanced").hidden, false);
+  const keys = ["debug_capture_requests", "debug_web_session"];
+  for (const key of keys) {
+    assert.equal(ui.get(key).checked, false);
+    ui.edit(key, true);
+    assert.equal(ui.get("save").disabled, false);
+    await ui.submit();
+    assert.equal(ui.state.config[key], true);
+    await ui.click("reload");
+    assert.equal(ui.get(key).checked, true);
+  }
+  await ui.click("reset");
+  for (const key of keys) {
+    assert.equal(ui.get(key).checked, false);
+    assert.equal(ui.state.config[key], true);
+  }
+  await ui.submit();
+  for (const key of keys) {
+    assert.equal(ui.state.config[key], false);
+    delete ui.state.config[key];
+  }
+  await ui.click("reload");
+  for (const key of keys) assert.equal(ui.get(key).checked, false);
   assert.equal(ui.get("save").disabled, true);
 });
 

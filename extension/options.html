@@ -152,6 +152,19 @@
                 </div>
               </div>
               <div data-slot="frame" class="settings-frame">
+                <header data-slot="frame-panel-header"><h2 data-slot="frame-panel-title">Debugging</h2><p data-slot="frame-panel-description">Optional diagnostics for this computer. Both options are off by default.</p></header>
+                <div data-slot="frame-panel">
+                  <div class="setting-row">
+                    <div class="setting-label"><label for="debug_capture_requests">Capture requests locally</label><p class="description" id="capture-requests-help">Save complete requests, including prompts and images, in debug/latest.json in the native app’s configuration folder. Only the latest capture is kept. Authentication headers are excluded.</p></div>
+                    <div class="setting-control"><label data-slot="switch"><input id="debug_capture_requests" type="checkbox" role="switch" aria-describedby="capture-requests-help"><span data-slot="switch-thumb" aria-hidden="true"></span></label></div>
+                  </div>
+                  <div class="setting-row">
+                    <div class="setting-label"><label for="debug_web_session">Use webpage send flow</label><p class="description" id="web-session-help">Send through the legacy /v3/chat page and show the response live. Open the dedicated conversation with loaded messages, the requested model, and Context Count 0. Its composer must be empty, with no attachments or active operation. Page controls lock during the request; cancel from your client. The school controls history retention.</p></div>
+                    <div class="setting-control"><label data-slot="switch"><input id="debug_web_session" type="checkbox" role="switch" aria-describedby="web-session-help"><span data-slot="switch-thumb" aria-hidden="true"></span></label></div>
+                  </div>
+                </div>
+              </div>
+              <div data-slot="frame" class="settings-frame">
                 <div data-slot="frame-panel"><div class="setting-row"><div class="setting-label"><h2 class="row-title">Reset defaults</h2><p class="description">Load defaults into the form. Save to apply.</p></div><div class="setting-control"><button id="reset" data-slot="button" data-variant="outline" type="button" disabled>Reset defaults</button></div></div></div>
               </div>
             </section>

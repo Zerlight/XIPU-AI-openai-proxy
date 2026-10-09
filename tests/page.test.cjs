@@ -18,7 +18,7 @@ const sse = (wire) => {
   }}), { headers: { 'Content-Type': 'text/event-stream' } });
 };
 const flush = () => new Promise(resolve => setImmediate(resolve));
-function mount(responses, cancel = false) {
+function mount(responses, cancel = false, web = null) {
   const events = [], calls = [];
   const pending = new Map();
   let listener;
@@ -35,7 +35,7 @@ function mount(responses, cancel = false) {
     async fetch(url, options) {
       calls.push({ url, ...options, body: options.body instanceof FormData ? options.body : options.body && JSON.parse(options.body) });
       assert.equal(options.headers['Jm-Token'], 'synthetic-school-token');
-      assert.equal(options.credentials, 'include');
+      if (!web || !url.endsWith('/api/chat/completions')) assert.equal(options.credentials, 'include');
       const next = responses.shift();
       assert.ok(next, 'unexpected school request');
       const cancelPath = { upload: '/api/common/upload', catalog: '/api/chat/config?lang=en',
@@ -46,16 +46,67 @@ function mount(responses, cancel = false) {
       return typeof next === 'function' ? next(options) : next;
     }
   };
+  const root = { inert: false, contains: element => element === composer,
+    __vue_app__: { config: { globalProperties: { $pinia: { state: { value: { user: { token: 'synthetic-school-token' } } } } } } } };
+  const composer = { value: web?.draft || '', getClientRects: () => [{}] };
+  const webState = { sendCalls: [], visibleResponses: [], stopCalls: 0, root, originalFetch: window.fetch, timer: null, pageController: new AbortController() };
+  const message = item => ({ type: { __name: 'MessageGroup' }, props: { item, loading: false, onStop: stop } });
+  const messages = [message({ userText: 'Prior synthetic message' })];
+  function stop() {
+    webState.stopCalls++;
+    webState.pageController.abort();
+    messages.at(-1).props.loading = false;
+  }
+  const chat = { type: { __name: 'chat' }, subTree: { props: { loading: web?.busy === true },
+    children: [{ props: { show: web?.historyLoading === true, size: 'small' } }, { props: { show: web?.dialog === true } }, messages] } };
+  const input = { type: { __name: 'ChatInput' }, parent: chat,
+    props: { item: { ...session, ...web?.session }, showExport: web?.emptyHistory ? 0 : 1, disableClearBtn: web?.emptyHistory === true },
+    subTree: { children: [{ props: { max: 15, value: web?.attachments || 0 } }] },
+    vnode: { props: { onSend: async request => {
+      webState.sendCalls.push(request);
+      assert.equal(root.inert, true, 'official send must run with page interaction locked');
+      if (web?.stall) return new Promise(() => {});
+      messages.push(message({ userText: request.text, model: input.props.item.model, userFile: request.files[0] || null }));
+      messages.at(-1).props.loading = true;
+      input.props.showExport++;
+      if (web?.background) await window.fetch('https://xipuai.xjtlu.edu.cn/jmapi/api/common/config', {
+        headers: { 'Jm-Token': 'synthetic-school-token' }, credentials: 'include'
+      });
+      const body = { ...request, responseId: 'previous-web-response', ...web?.requestChanges };
+      let response;
+      try {
+        response = await window.fetch(web?.url || 'https://xipuai.xjtlu.edu.cn/jmapi/api/chat/completions', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'Jm-Token': 'synthetic-school-token' },
+          signal: webState.pageController.signal, body: JSON.stringify(body)
+        });
+      } catch (error) { if (web?.swallow) return; throw error; }
+      if (response.status !== 200) throw response;
+      webState.visibleResponses.push(await response.text());
+      if (web?.hangAfterResponse) return new Promise(() => {});
+      messages.at(-1).props.loading = false;
+    } } }
+  };
+  input.subTree.children.push({ type: 'textarea', el: composer });
+  chat.subTree.children.push({ component: input });
+  root._vnode = { component: { subTree: { children: [{ component: chat }] } } };
+  if (!web?.production) composer.__vueParentComponent = input;
+  if (web?.missingTree) delete root._vnode;
+  if (web?.missingSend) delete input.vnode.props.onSend;
+  if (web?.decoy || web?.ambiguous) root._vnode.component.subTree.children.push({ component: {
+    ...input, subTree: { children: [{ type: 'textarea', el: web.ambiguous ? composer : {} }] }
+  } });
+  webState.input = input;
+  webState.messages = messages;
   vm.runInNewContext(source, {
     window, location: { origin: 'https://xipuai-xjtlu-edu-cn-s.xjtlu.edu.cn' },
     TextDecoder, AbortController, FormData, File, atob, btoa,
-    document: { querySelector: () => ({ __vue_app__: { config: { globalProperties: {
-      $pinia: { state: { value: { user: { token: 'synthetic-school-token' } } } }
-    }}}}) },
+    setTimeout: callback => { webState.timer = callback; return 1; },
+    clearTimeout: () => { webState.timer = null; },
+    document: { querySelector: () => root, querySelectorAll: () => web ? [composer] : [] },
     localStorage: { getItem: () => 'en' }
   });
   return {
-    events, calls,
+    events, calls, web: webState, window,
     request(op, body = payload, job = 'test-job') {
       const done = new Promise(resolve => pending.set(job, resolve));
       const message = { source: 'xipu-bridge', type: 'req', job, op, payload: body };
@@ -68,8 +119,8 @@ function mount(responses, cancel = false) {
     cancel(job = 'test-job') { listener({ source: window, data: { source: 'xipu-bridge', type: 'cancel', job } }); }
   };
 }
-async function run(op, responses, body = payload, cancel = false) {
-  const h = mount(responses, cancel);
+async function run(op, responses, body = payload, cancel = false, web = null) {
+  const h = mount(responses, cancel, web);
   const done = h.request(op, body);
   if (cancel === true) h.cancel();
   await done;
@@ -77,7 +128,126 @@ async function run(op, responses, body = payload, cancel = false) {
   const { events, calls } = h;
   assert.equal(responses.length, 0);
   assert.ok(!JSON.stringify(events).includes('synthetic-school-token'), 'school token leaked');
-  return { events, calls, error: events.at(-1).message };
+  return { events, calls, error: events.at(-1).message, web: h.web, window: h.window };
+}
+
+async function webSendChecks() {
+  const request = { ...payload, debug_web_session: true, text: '  Exact synthetic text\n', online: 1, thinking: 'high' };
+  const reply = () => sse('data: {"code":0,"type":"string","data":"VISIBLE_OK"}\n\n');
+  const direct = await run('chat', [list(), reply()], { ...request, debug_web_session: false }, false, {});
+  assert.equal(direct.web.sendCalls.length, 0, 'the default fetch path must not call the webpage handler');
+  assert.equal(direct.calls.length, 2);
+  const sent = await run('chat', [list(), reply()], request, false, {});
+  assert.equal(sent.error, undefined);
+  assert.equal(sent.web.sendCalls.length, 1);
+  assert.equal(sent.calls.length, 2, 'one official send must produce one completion');
+  assert.equal(sent.calls[1].body.text, request.text, 'the official handler must receive exact untrimmed text');
+  assert.equal(sent.calls[1].body.responseId, null, 'web history must not become school context');
+  assert.equal(sent.calls[1].body.online, 1);
+  assert.equal(sent.calls[1].body.thinking, 'high');
+  assert.equal(sent.calls[1].body.sessionId, session.id);
+  assert.ok(sent.web.visibleResponses[0].includes('VISIBLE_OK'), 'the official reader must receive its own response body');
+  assert.equal(sent.events.find(event => event.kind === 'event').event.data, 'VISIBLE_OK');
+  assert.equal(sent.web.root.inert, false);
+  assert.equal(sent.window.fetch, sent.web.originalFetch);
+  const production = await run('chat', [list(), reply()], request, false, { production: true, decoy: true });
+  assert.equal(production.error, undefined, 'production traversal must match the actual visible textarea, ignoring other composers');
+  assert.equal(production.web.sendCalls.length, 1);
+  assert.equal(production.calls[1].body.responseId, null);
+  assert.equal(production.web.root.inert, false);
+  assert.equal(production.window.fetch, production.web.originalFetch);
+  for (const [page, diagnostic] of [
+    [{ production: true, missingTree: true }, /mounted Vue app tree/],
+    [{ production: true, ambiguous: true }, /matched to one official ChatInput/],
+    [{ production: true, missingSend: true }, /ChatInput send handler/]
+  ]) {
+    const rejected = await run('chat', [list()], request, false, page);
+    assert.match(rejected.error, diagnostic);
+    assert.equal(rejected.events.at(-1).code, 'debug_web_session_unavailable');
+    assert.equal(rejected.calls.length, 1);
+    assert.equal(rejected.web.sendCalls.length, 0);
+    assert.equal(rejected.web.root.inert, false);
+    assert.equal(rejected.window.fetch, rejected.web.originalFetch);
+  }
+  for (const page of [{ draft: 'Existing unsent draft' }, { attachments: 1 }, { emptyHistory: true }, { busy: true },
+    { historyLoading: true }, { dialog: true },
+    { session: { id: 99 } }, { session: { name: 'Other session' } }, { session: { model: 'other-model' } }, { session: { contextCount: 1 } }]) {
+    const rejected = await run('chat', [list()], request, false, { production: true, ...page });
+    assert.match(rejected.error, /^Webpage send:/);
+    assert.equal(rejected.events.at(-1).code, 'debug_web_session_unavailable');
+    assert.equal(rejected.calls.length, 1, 'web preflight failures must stop before mutations or generation');
+    assert.equal(rejected.web.sendCalls.length, 0);
+    assert.equal(rejected.web.root.inert, false);
+    assert.equal(rejected.window.fetch, rejected.web.originalFetch);
+  }
+  for (const page of [{ requestChanges: { text: 'Changed text' } }, { requestChanges: { files: ['https://other.example/image.png'] } },
+    { requestChanges: { sessionId: 99 } }, { requestChanges: { online: 0 } }, { requestChanges: { thinking: 'low' } },
+    { url: 'https://other.example/api/chat/completions' }, { requestChanges: { text: 'Changed text' }, swallow: true }]) {
+    const rejected = await run('chat', [list()], request, false, page);
+    assert.match(rejected.error, /^Webpage send:/);
+    assert.equal(rejected.calls.length, 1, 'mismatched official requests must never reach fetch');
+    assert.equal(rejected.events.at(-1).code, 'debug_web_session_unavailable');
+    assert.equal(rejected.web.root.inert, false);
+    assert.equal(rejected.window.fetch, rejected.web.originalFetch);
+    assert.equal(rejected.web.messages.at(-1).props.loading, false);
+  }
+  const background = await run('chat', [list(), json({ code: 0 }), reply()], request, false, { background: true });
+  assert.equal(background.error, undefined);
+  assert.equal(background.calls.length, 3, 'unrelated webpage requests must retain the original fetch path');
+  const httpFailure = await run('chat', [list(), json({ code: 10008 }, 502)], request, false, {});
+  assert.match(httpFailure.error, /^Generate response: .*HTTP 502/);
+  assert.equal(httpFailure.web.stopCalls, 1, 'HTTP rejection must clear the official page loading state');
+  assert.equal(httpFailure.web.messages.at(-1).props.loading, false);
+  assert.equal(httpFailure.web.root.inert, false);
+  assert.equal(httpFailure.window.fetch, httpFailure.web.originalFetch);
+  const schoolFailure = await run('chat', [list(), sse('data: {"code":10008}\n\n')], request, false, {});
+  assert.equal(schoolFailure.error, 'Generate response: The school API rejected the request (school code 10008)');
+  assert.equal(schoolFailure.web.root.inert, false);
+  assert.equal(schoolFailure.web.messages.at(-1).props.loading, false);
+  const stalled = mount([list()], false, { stall: true });
+  const stalledDone = stalled.request('chat', request);
+  await flush();
+  assert.equal(stalled.web.root.inert, true);
+  stalled.web.timer();
+  await stalledDone; await flush();
+  assert.match(stalled.events.at(-1).message, /did not start the request in time/);
+  assert.equal(stalled.events.at(-1).code, 'debug_web_session_unavailable');
+  assert.equal(stalled.calls.length, 1);
+  assert.equal(stalled.web.root.inert, false);
+  assert.equal(stalled.window.fetch, stalled.web.originalFetch);
+  let aborted = false;
+  const pending = mount([list(), ({ signal }) => new Promise((resolve, reject) => {
+    signal.addEventListener('abort', () => { aborted = true; reject(new Error('Synthetic fetch cancelled')); }, { once: true });
+  })], false, {});
+  const pendingDone = pending.request('chat', request);
+  await flush();
+  pending.cancel();
+  await pendingDone; await flush();
+  assert.equal(aborted, true, 'native cancellation must abort the official network request');
+  assert.equal(pending.calls.length, 2);
+  assert.equal(pending.web.root.inert, false);
+  assert.equal(pending.window.fetch, pending.web.originalFetch);
+  assert.equal(pending.web.visibleResponses.length, 0);
+  assert.equal(pending.web.messages.at(-1).props.loading, false);
+  const hanging = mount([list(), reply()], false, { hangAfterResponse: true });
+  const hangingDone = hanging.request('chat', request);
+  for (let count = 0; count < 10 && !hanging.web.visibleResponses.length; count++) await flush();
+  assert.equal(hanging.web.visibleResponses.length, 1);
+  hanging.cancel();
+  await hangingDone; await flush();
+  assert.equal(hanging.web.root.inert, false, 'cancellation must unlock even a hanging official send promise');
+  assert.equal(hanging.window.fetch, hanging.web.originalFetch);
+  assert.equal(hanging.web.messages.at(-1).props.loading, false);
+  const changed = mount([list(), reply()], false, { hangAfterResponse: true });
+  const changedDone = changed.request('chat', request);
+  for (let count = 0; count < 10 && !changed.web.visibleResponses.length; count++) await flush();
+  assert.equal(changed.web.visibleResponses.length, 1);
+  changed.web.input.props.item = { ...session, id: 99 };
+  changed.cancel();
+  await changedDone; await flush();
+  assert.equal(changed.web.stopCalls, 0, 'cleanup must not append an abort event to another visible conversation');
+  assert.equal(changed.web.root.inert, false);
+  assert.equal(changed.window.fetch, changed.web.originalFetch);
 }
 
 async function setupChecks() {
@@ -344,6 +514,7 @@ async function cancellationChecks() {
 
 async function main() {
   await setupChecks();
+  await webSendChecks();
   await recoveryChecks();
   await cancellationChecks();
   const models = await run('models', [json({ code: 0, data: { models: [{ value: model }] } })]);
@@ -472,10 +643,19 @@ async function main() {
   const missing = await run('chat', [], { model, text: 'test' });
   assert.ok(missing.error.includes('dedicated'));
   const rateLimit = await run('chat', [list(), json({ code: 429, msg: 'rate limited' }, 429)]);
-  assert.equal(rateLimit.error, 'rate limited');
+  assert.equal(rateLimit.error, 'Generate response: rate limited');
   assert.equal(rateLimit.calls.length, 2, '429 must not be retried');
+  const schoolRejection = { code: 10008, msg: { token: 'synthetic-school-token' },
+    message: ['private error details'], data: { request: 'private prompt content' } };
+  for (const response of [json(schoolRejection), sse(`data: ${JSON.stringify(schoolRejection)}\n\n`)]) {
+    const rejected = await run('chat', [list(), response]);
+    assert.equal(rejected.error, 'Generate response: The school API rejected the request (school code 10008)');
+    assert.equal(rejected.calls.length, 2, 'rejected completions must not be retried');
+    assert.equal(rejected.events.filter(event => event.kind === 'event').length, 0, 'rejected bodies must not be forwarded');
+    assert.ok(!JSON.stringify(rejected.events).includes('private'), 'error details and prompt content must not be exposed');
+  }
   const failed = await run('chat', [list(), sse('data: {"code":23,"msg":"upstream failed"}\n\n')]);
-  assert.equal(failed.error, 'upstream failed');
+  assert.equal(failed.error, 'Generate response: upstream failed');
   const malformed = await run('chat', [list(), sse('data: not-json\n\n')]);
   assert.ok(malformed.error.includes('invalid SSE'));
   const trailing = await run('chat', [list(), sse('data: {"type":"string","data":"final"}')]);
@@ -502,7 +682,7 @@ async function main() {
     assert.equal(metadata.events.filter(x => x.kind === 'event').length, 1);
   }
   const lateError = await run('chat', [list(), sse('data: {"type":"string","data":"partial"}\n\ndata: {"code":23,"msg":"upstream failed"}\n\n')]);
-  assert.equal(lateError.error, 'upstream failed');
+  assert.equal(lateError.error, 'Generate response: upstream failed');
   const readFailure = new Response(new ReadableStream({ start(controller) {
     controller.enqueue(new TextEncoder().encode('data: {"type":"string","data":"partial"}\n\n'));
   }, pull(controller) { controller.error(new Error('Synthetic stream read failure')); } }), { headers: { 'Content-Type': 'text/event-stream' } });
@@ -566,8 +746,13 @@ async function main() {
   assert.equal(multiple.error, undefined);
   assert.deepEqual(multiple.calls.at(-1).body.files, uploadedURLs, 'preserve image order across sequential uploads');
   const failedSecondUpload = await run('chat', [catalog(), list(), json({ code: 0, data: { url: uploadedURLs[0] } }), json({ code: 429, msg: 'second upload rate limited' }, 429)], { ...payload, images: fourImages });
-  assert.equal(failedSecondUpload.error, 'second upload rate limited');
+  assert.equal(failedSecondUpload.error, 'Upload image: second upload rate limited');
   assert.equal(failedSecondUpload.calls.length, 4, 'stop on first failed upload without guessing a remote cleanup endpoint');
+  const rejectedUpload = await run('chat', [catalog(), list(), json({ ...schoolRejection, code: '10008' })], imagePayload);
+  assert.equal(rejectedUpload.error, 'Upload image: The school API rejected the request (school code 10008)');
+  assert.equal(rejectedUpload.calls.length, 3, 'rejected uploads must not be retried or followed by completion');
+  assert.equal(rejectedUpload.events.filter(event => event.kind === 'event').length, 0, 'rejected upload bodies must not be forwarded');
+  assert.ok(!JSON.stringify(rejectedUpload.events).includes('private'), 'upload error details and prompt content must not be exposed');
   const unsupported = await run('chat', [catalog(false)], imagePayload);
   assert.match(unsupported.error, /does not advertise image support/);
   assert.match(unsupported.error, /conversation history/);

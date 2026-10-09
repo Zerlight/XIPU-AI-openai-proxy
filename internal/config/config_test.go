@@ -17,13 +17,15 @@ func TestDefaultsAndExplicitFalseSurvivePersistence(t *testing.T) {
 		t.Fatal(err)
 	}
 	value, err := Load(dir)
-	if err != nil || !value.IncludeReasoning || value.OmitHistoricalImages || value.Thinking != "minimal" || value.SessionName != "XIPU AI Bridge" {
+	if err != nil || !value.IncludeReasoning || value.OmitHistoricalImages || value.DebugCaptureRequests || value.DebugWebSession || value.Thinking != "minimal" || value.SessionName != "XIPU AI Bridge" {
 		t.Fatalf("incorrect defaults: %+v %v", value, err)
 	}
 	value.IncludeReasoning = false
 	value.Online = false
 	value.DefaultModel = "synthetic-model"
 	value.OmitHistoricalImages = true
+	value.DebugCaptureRequests = true
+	value.DebugWebSession = true
 	if err := Save(dir, value); err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +40,7 @@ func TestDefaultsAndExplicitFalseSurvivePersistence(t *testing.T) {
 }
 
 func TestRejectInvalidOrProtectedSettings(t *testing.T) {
-	for _, raw := range []string{`{"allowed_origins":[]}`, `{"include_reasoning":null}`, `{"omit_historical_images":null}`, `{"omit_historical_images":1}`, `{"omit_historical_images":"true"}`, `{"online":1}`, `{"port":0}`, `{"port":65536}`, `{"thinking":"unlimited"}`, `{"session_name":" "}`, `{"default_model":"model\nname"}`, `{"chat_timeout_seconds":9}`, `{"model_timeout_seconds":121}`, `{"idle_timeout_seconds":301}`, `{"unknown":true}`, `null`} {
+	for _, raw := range []string{`{"allowed_origins":[]}`, `{"include_reasoning":null}`, `{"omit_historical_images":null}`, `{"omit_historical_images":1}`, `{"omit_historical_images":"true"}`, `{"debug_capture_requests":null}`, `{"debug_capture_requests":1}`, `{"debug_web_session":"true"}`, `{"debug_web_session":null}`, `{"online":1}`, `{"port":0}`, `{"port":65536}`, `{"thinking":"unlimited"}`, `{"session_name":" "}`, `{"default_model":"model\nname"}`, `{"chat_timeout_seconds":9}`, `{"model_timeout_seconds":121}`, `{"idle_timeout_seconds":301}`, `{"unknown":true}`, `null`} {
 		if _, err := DecodeSettings([]byte(raw), Defaults().Settings); err == nil {
 			t.Fatalf("accepted invalid settings %s", raw)
 		}
@@ -46,13 +48,19 @@ func TestRejectInvalidOrProtectedSettings(t *testing.T) {
 	current := Defaults().Settings
 	current.Online = true
 	current.OmitHistoricalImages = true
+	current.DebugCaptureRequests = true
+	current.DebugWebSession = true
 	updated, err := DecodeSettings([]byte(`{"include_reasoning":false}`), current)
-	if err != nil || updated.IncludeReasoning || !updated.Online || !updated.OmitHistoricalImages {
+	if err != nil || updated.IncludeReasoning || !updated.Online || !updated.OmitHistoricalImages || !updated.DebugCaptureRequests || !updated.DebugWebSession {
 		t.Fatal("omitted settings were reset")
 	}
 	updated, err = DecodeSettings([]byte(`{"omit_historical_images":false}`), updated)
 	if err != nil || updated.OmitHistoricalImages {
 		t.Fatal("explicit false did not disable historical image omission")
+	}
+	updated, err = DecodeSettings([]byte(`{"debug_capture_requests":false,"debug_web_session":false}`), updated)
+	if err != nil || updated.DebugCaptureRequests || updated.DebugWebSession {
+		t.Fatal("explicit false did not disable debugging")
 	}
 }
 

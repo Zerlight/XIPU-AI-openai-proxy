@@ -35,7 +35,7 @@
       port.postMessage({ type: "evt", evt: {
         job: event.data.job, kind: event.data.kind, event: event.data.event,
         result: event.data.result, message: event.data.message,
-        ...(event.data.code === "unsupported_image_model" ? { code: event.data.code } : {})
+        ...(["unsupported_image_model", "debug_web_session_unavailable"].includes(event.data.code) ? { code: event.data.code } : {})
       }});
     } catch {
       // Reload can invalidate a context before onDisconnect is delivered.

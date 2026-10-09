@@ -40,7 +40,7 @@ func Run(ctx context.Context, input io.Reader, output io.Writer, origin, dir str
 		return fmt.Errorf("listen on loopback: %w", err)
 	}
 	writer := &Writer{Output: output}
-	handler := bridge.New(bridge.Options{Key: key, Settings: settings.Settings, Send: writer.Send})
+	handler := bridge.New(bridge.Options{Key: key, Settings: settings.Settings, ConfigDir: dir, Send: writer.Send})
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 1810 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 16 << 10}
 	defer func() { handler.Close(); server.Close(); listener.Close() }()
 	serveErr := make(chan error, 1)

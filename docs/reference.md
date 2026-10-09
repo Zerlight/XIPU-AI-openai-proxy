@@ -40,6 +40,8 @@ After onboarding, the popup shows connection status and client credentials. The 
 | Chat timeout | 300 seconds | Total time allowed for a completion; 10–1800 seconds |
 | Catalog timeout | 30 seconds | Time allowed for the API model list; 5–120 seconds |
 | Idle timeout | 90 seconds | Maximum gap between school events; 5–600 seconds and no longer than the chat timeout |
+| Capture requests locally | Off | Keep the latest request and derived school payload in a local debug file |
+| Use webpage send flow | Off | Send through the official webpage and display the response live in the dedicated conversation |
 | Appearance | System | System, light, or dark, shared by popup and settings |
 
 Settings are validated by both the UI and native host. **Save** writes a temporary file before replacing the saved configuration. Most changes apply immediately while idle; changing the port requires an explicit reconnect. The displayed base URL remains the actual bound address until that reconnect succeeds. Restore defaults edits the form and requires Save to take effect. Reload reads the host's current saved configuration.
@@ -49,6 +51,20 @@ The settings page also provides masked key reveal/copy, explicit API-key rotatio
 Turning off Include reasoning only omits reasoning from client responses. It does not disable the school's thinking process or reduce its usage charges. School discovery has a separate fixed 30-second limit; the catalog timeout controls `GET /v1/models`.
 
 Appearance is stored in extension storage. Host settings and the local key live under the OS user configuration directory in `XIPU AI Bridge`. Reinstalling preserves saved settings and the local key; explicit installer `--session-name` or `--port` flags override those two fields.
+
+### Debugging
+
+**Advanced → Debugging** offers two independent options, both off by default. Save changes to apply them; Reset defaults switches them off in the form.
+
+**Capture requests locally** (`debug_capture_requests`) stores the complete API request body, including prompts and image data, the derived school payload, and diagnostic events in `debug/latest.json` under the host configuration directory. This private local file is outside the repository and replaces the previous capture. Authentication headers are excluded. Diagnostic event capture is bounded and marks truncation explicitly. Treat the file as sensitive; turning capture off stops new captures but does not remove the saved file.
+
+**Use webpage send flow** (`debug_web_session`) uses the legacy `/v3/chat` page's official Send flow so the dedicated conversation shows the response live. Before sending an API request:
+
+- Open the dedicated conversation and load its existing messages. Empty conversations are refused because the webpage's first send would rename them.
+- Select the requested model and set Context Count to 0. Both the saved session and the visible page must match; this mode does not switch models automatically.
+- Leave the composer empty, remove pending webpage attachments, close the upload dialog, and wait for any active webpage operation to finish.
+
+Page controls are temporarily locked during the request; cancellation remains available through the API client. If the supported send interface or its state cannot be verified, the request fails without falling back to the direct send path or retrying. The school controls server history retention; this option does not guarantee persistent or unlimited history.
 
 ## Models and session isolation
 
@@ -70,11 +86,11 @@ After a school error or timeout, **Refresh** reads local connection status witho
 
 Reading the school's catalog and sessions does not generate a response or change school settings. Discovery returns only model/session display metadata, never the school token or chat history. Select a session and click **Use session** to fill its name and default model in the local form, then **Save changes** to apply them. This does not change the school conversation. Unsafe or ambiguous sessions cannot be selected.
 
-An explicit API `model` always takes precedence over the configured default. Before generation, the bridge reads the selected school conversation and requires its Context Count to be 0. If the model differs, it updates that conversation's model while preserving its other settings, then verifies the saved model, unchanged session ID, and Context Count 0 before sending a completion. A failed update or verification stops the request.
+An explicit API `model` always takes precedence over the configured default. Before generation, the bridge reads the selected school conversation and requires its Context Count to be 0. In the default send mode, if the model differs, it updates that conversation's model while preserving its other settings, then verifies the saved model, unchanged session ID, and Context Count 0 before sending a completion. A failed update or verification stops the request. The optional [webpage send mode](#debugging) requires the requested model to be selected already.
 
 Model changes persist. Failure or cancellation after an update can leave the new model selected; the bridge does not roll back changes or retry automatically. Reserve the selected conversation exclusively for the bridge, and do not manually edit it or send messages there while a request is active.
 
-Only the explicit Setup action creates a school conversation. Ordinary API requests never create, clear, or delete conversations. Responses remain visible in the dedicated conversation. With Context Count 0, each request supplies the client's complete transcript as text. School-side prompt and generation settings still apply.
+Only the explicit Setup action creates a school conversation. Ordinary API requests never create, clear, or delete conversations. The school may retain responses in the dedicated conversation; outside webpage send mode, the page may need a refresh to show them. Server retention and unlimited history are not guaranteed. With Context Count 0, each request supplies the client's complete transcript as text. School-side prompt and generation settings still apply.
 
 ## API
 

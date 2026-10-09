@@ -276,6 +276,10 @@ func (request generationRequest) validate(text, reasoning, id string) (generatio
 
 func readRequest(w http.ResponseWriter, r *http.Request, target any, fields ...string) error {
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 24<<20))
+	if capture := captureFrom(r.Context()); capture != nil {
+		capture.RequestBody = string(raw)
+		capture.RequestBodyTruncated = err != nil
+	}
 	if err != nil {
 		return errors.New("Invalid JSON request or request body exceeds 24 MiB")
 	}
@@ -453,7 +457,7 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, request genera
 		if !time.Now().Before(deadline) {
 			return nil, errTimeout
 		}
-		payload := map[string]any{"model": model, "text": request.prompt(), "thinking": effort, "online": online, "session_name": settings.SessionName}
+		payload := map[string]any{"model": model, "text": request.prompt(), "thinking": effort, "online": online, "session_name": settings.SessionName, "debug_web_session": settings.DebugWebSession}
 		if len(images) > 0 {
 			payload["images"] = images
 		}
@@ -511,6 +515,9 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, request genera
 	}
 	if _, responses := output.(*responsesOutput); err == nil && result.content == "" && len(result.calls) == 0 && (responses || result.reasoning == "") {
 		err = errMissingText
+	}
+	if err != nil && active.capture != nil {
+		active.capture.Error = err.Error()
 	}
 	s.release(active, !complete)
 	if r.Context().Err() != nil {

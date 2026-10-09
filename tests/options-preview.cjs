@@ -30,7 +30,7 @@ function startPreview(startPath = "/") {
         const previewConfig = {
           session_name: "XIPU AI Bridge", port: 8765, default_model: "", thinking: "minimal", online: false,
           chat_timeout_seconds: 300, model_timeout_seconds: 30, idle_timeout_seconds: 90, include_reasoning: true,
-          omit_historical_images: false
+          omit_historical_images: false, debug_capture_requests: false, debug_web_session: false
         };
         let activePort = 8765;
         const previewStore = {

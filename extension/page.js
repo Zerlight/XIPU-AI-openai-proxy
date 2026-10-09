@@ -173,10 +173,10 @@
   async function pump(job, response, signal) {
     signal.throwIfAborted();
     if (!(response.headers.get("content-type") || "").includes("text/event-stream")) {
-      emit(job, { kind: "event", event: await asJSON(response) }, signal);
+      emit(job, { kind: "event", event: await asJSON(response, "Generate response") }, signal);
       return;
     }
-    if (!response.ok) await asJSON(response);
+    if (!response.ok) await asJSON(response, "Generate response");
     if (!response.body) throw new Error(`HTTP ${response.status}`);
     const reader = response.body.getReader();
     const cancelReader = () => { reader.cancel().catch(() => {}); };
@@ -193,7 +193,7 @@
         let event;
         try { event = JSON.parse(frame); }
         catch { throw new Error("The school API returned an invalid SSE event."); }
-        emit(job, { kind: "event", event: check(event) }, signal);
+        emit(job, { kind: "event", event: check(event, "Generate response") }, signal);
       } else if (value === "data" || value.startsWith("data:")) {
         const part = value === "data" ? "" : value.slice(5).replace(/^ /, "");
         size += part.length + 1;
@@ -234,6 +234,166 @@
     } finally {
       signal.removeEventListener("abort", cancelReader);
       try { await reader.cancel(); } finally { reader.releaseLock(); }
+    }
+  }
+
+  function webSendError(message) {
+    return Object.assign(new Error(`Webpage send: ${message}`), { code: "debug_web_session_unavailable" });
+  }
+
+  function webSendTarget(session, payload) {
+    const fail = detail => { throw webSendError(`${detail} No completion was sent.`); };
+    const composers = [...document.querySelectorAll("textarea")].filter(element => element.getClientRects().length);
+    if (composers.length !== 1) fail("Open the legacy /v3/chat page with the dedicated conversation visible.");
+    const composer = composers[0], root = document.querySelector("#app");
+    if (!root || !root.contains(composer)) fail("The visible composer is outside the official chat app.");
+    if (root.inert) fail("Wait for the active webpage bridge operation to finish.");
+    let input = composer.__vueParentComponent;
+    while (input && input.type?.__name !== "ChatInput") input = input.parent;
+    if (!input) {
+      // The production Vue bundle omits element parent hooks but retains the mounted root vnode.
+      if (!root._vnode?.component) fail("The mounted Vue app tree is unavailable; reload the legacy chat page.");
+      const candidates = new Set();
+      visit(root._vnode, node => {
+        const component = node.component;
+        if (component?.type?.__name !== "ChatInput" || component.isUnmounted) return;
+        visit(component.subTree, child => { if (child.el === composer) candidates.add(component); });
+      });
+      if (candidates.size !== 1) fail("The visible composer could not be matched to one official ChatInput component.");
+      [input] = candidates;
+    }
+    if (input.isUnmounted) fail("The official composer was unmounted; wait for the page to finish loading.");
+    if (typeof input.vnode?.props?.onSend !== "function") fail("The official ChatInput send handler is unavailable or has changed.");
+    const item = input.props?.item;
+    if (!sameSessionID(item?.id, session.id) || item.name !== payload.session_name
+      || item.model !== payload.model || session.model !== payload.model || item.contextCount !== 0) {
+      fail("Select the dedicated conversation and requested model in the webpage, with Context Count 0.");
+    }
+    // The legacy first-message handler always renames an empty conversation.
+    if (!Number.isSafeInteger(input.props.showExport) || input.props.showExport < 1 || input.props.disableClearBtn !== false) {
+      fail("Load a conversation with existing messages; an empty conversation would be renamed by the webpage.");
+    }
+    if (composer.value !== "") fail("Clear or save the existing webpage draft first.");
+    function visit(node, inspect, seen = new Set()) {
+      if (!node || typeof node !== "object" || seen.has(node)) return;
+      if (seen.size >= 10000) fail("The official chat page is too complex to verify.");
+      seen.add(node);
+      if (Array.isArray(node)) { for (const child of node) visit(child, inspect, seen); return; }
+      inspect(node);
+      visit(node.children, inspect, seen);
+      visit(node.component?.subTree, inspect, seen);
+    }
+    let attachmentCounts = 0;
+    visit(input.subTree, node => {
+      const props = node.props;
+      // ChatInput's upload badge reflects its pending attachment array, even with the dialog closed.
+      if (props?.max === 15 && Number.isSafeInteger(props.value)) {
+        attachmentCounts++;
+        if (props.value !== 0) fail("Remove the pending webpage attachments first.");
+      }
+      if (props?.preset === "dialog" && props.show) fail("Close the webpage upload dialog first.");
+    });
+    if (attachmentCounts !== 1) fail("The webpage attachment state could not be verified.");
+    let chat = input.parent;
+    while (chat && chat.type?.__name !== "chat") chat = chat.parent;
+    if (!chat) fail("The official chat component could not be verified.");
+    visit(chat.subTree, node => {
+      if (node.props?.loading === true) fail("Wait for the active webpage operation to finish.");
+      if (node.props?.show === true) fail("Wait for webpage history to load and close open dialogs first.");
+    });
+    const messages = () => {
+      const result = [];
+      visit(chat.subTree, node => { if (node.type?.__name === "MessageGroup") result.push(node.props); });
+      return result;
+    };
+    const existing = messages(), stop = existing.at(-1)?.onStop;
+    if (existing.length !== input.props.showExport || typeof stop !== "function"
+      || existing.some(message => message.onStop !== stop)) fail("The webpage message and stop interfaces could not be verified.");
+    return { input, root, send: input.vnode.props.onSend, messages, stop, previous: existing.at(-1).item };
+  }
+
+  async function sendFromWeb(job, target, session, payload, files, options, lang) {
+    if (webSendTarget(session, payload).input !== target.input) throw webSendError("The visible conversation changed. No completion was sent.");
+    const originalFetch = window.fetch, priorInert = target.root.inert, controller = new AbortController();
+    const expected = { text: payload.text, files, online: payload.online ? 1 : 0, thinking: payload.thinking || "minimal", sessionId: session.id, lang };
+    let resolveResponse, rejectResponse, rejectStopped, pageSignal, pageAbort, requested = false, active = true;
+    const responseReady = new Promise((resolve, reject) => { resolveResponse = resolve; rejectResponse = reject; });
+    const stopped = new Promise((_, reject) => { rejectStopped = reject; });
+    function stop(message, unavailable = false) {
+      controller.abort();
+      const error = unavailable ? webSendError(message) : new Error(message);
+      rejectResponse(error); rejectStopped(error);
+    }
+    const cancelled = () => stop("The school request was cancelled.");
+    const timer = setTimeout(() => stop("The official page did not start the request in time; it was not retried.", true), 10000);
+    function refuse(message) {
+      const error = webSendError(message);
+      rejectResponse(error); rejectStopped(error);
+      throw error;
+    }
+    const intercepted = async (url, init) => {
+      const address = typeof url === "string" ? url : url?.url;
+      if (!/\/api\/chat\/completions(?:[?#]|$)/.test(address || "")) return originalFetch.call(window, url, init);
+      if (url !== `${API}/api/chat/completions`) refuse("The official completion destination changed.");
+      if (!active || requested || options.signal.aborted) refuse("A cancelled or duplicate completion was blocked.");
+      const visible = target.input.props?.item;
+      if (!sameSessionID(visible?.id, session.id) || visible?.name !== payload.session_name
+        || visible?.model !== payload.model || visible?.contextCount !== 0) refuse("The visible conversation changed. No completion was sent.");
+      let body;
+      try { body = JSON.parse(init?.body); } catch { refuse("The official request format changed."); }
+      if (init?.method !== "POST" || !body || typeof body !== "object" || Array.isArray(body)
+        || Object.keys(body).some(key => ![...Object.keys(expected), "responseId"].includes(key))
+        || Object.entries(expected).some(([key, value]) => JSON.stringify(body[key]) !== JSON.stringify(value))) {
+        refuse("The official request did not match the verified bridge request.");
+      }
+      requested = true;
+      clearTimeout(timer);
+      // Keep stateless client replay isolated while the official handler updates its visible messages.
+      body.responseId = null;
+      pageSignal = init.signal;
+      pageAbort = () => stop("Webpage send: The official page cancelled the request.");
+      pageSignal?.addEventListener("abort", pageAbort, { once: true });
+      if (pageSignal?.aborted) pageAbort();
+      try {
+        const response = await originalFetch.call(window, url, { ...init, body: JSON.stringify(body), signal: controller.signal });
+        if (!active || controller.signal.aborted) {
+          await response.body?.cancel();
+          throw new Error("The school request was cancelled.");
+        }
+        resolveResponse(response.clone());
+        return response;
+      } catch (error) { rejectResponse(error); throw error; }
+    };
+    options.signal.addEventListener("abort", cancelled, { once: true });
+    target.root.inert = true;
+    window.fetch = intercepted;
+    try {
+      options.signal.throwIfAborted();
+      let officialError;
+      const official = Promise.resolve().then(() => target.send({ ...expected })).catch(error => {
+        officialError = error?.code === "debug_web_session_unavailable" ? error
+          : new Error("Webpage send: The official page could not complete its send flow.");
+        rejectResponse(officialError);
+      });
+      const response = await Promise.race([responseReady, stopped]);
+      await Promise.race([Promise.all([pump(job, response, options.signal), official]), stopped]);
+      if (officialError) throw officialError;
+    } finally {
+      active = false;
+      controller.abort();
+      clearTimeout(timer);
+      options.signal.removeEventListener("abort", cancelled);
+      pageSignal?.removeEventListener("abort", pageAbort);
+      if (window.fetch === intercepted) window.fetch = originalFetch;
+      target.root.inert = priorInert;
+      // The legacy fetch rejects before clearing loading on network/HTTP failures.
+      // Its public Stop handler clears that state, but also appends to the last message.
+      await Promise.resolve();
+      const item = target.input.props?.item, last = target.messages().at(-1);
+      if (!target.input.isUnmounted && sameSessionID(item?.id, session.id) && item?.name === payload.session_name
+        && item?.model === payload.model && last?.loading === true && last.onStop === target.stop
+        && last.item !== target.previous && last.item?.userText === payload.text && last.item?.model === payload.model
+        && last.item?.userFile === (files[0] || null)) target.stop();
     }
   }
 
@@ -309,6 +469,7 @@
     }
     let selected = await readSession();
     let session = selected.session;
+    const webTarget = payload.debug_web_session === true ? webSendTarget(session, payload) : null;
     if (session.model !== payload.model) {
       await requestedModel();
       options.signal.throwIfAborted();
@@ -339,12 +500,16 @@
       form.append("file", new File([bytes], image.name, { type: image.mime }));
       form.append("lang", lang);
       // Let fetch set the multipart boundary, as the official upload helper does.
-      const uploaded = await asJSON(await window.fetch(`${API}/api/common/upload`, { ...options, method: "POST", body: form }));
+      const uploaded = await asJSON(await window.fetch(`${API}/api/common/upload`, { ...options, method: "POST", body: form }), "Upload image");
       const url = uploaded?.data?.url || uploaded?.data?.file_url;
       if (typeof url !== "string" || !/^https?:\/\//.test(url)) throw new Error("The school upload did not return a valid image URL.");
       files.push(url);
     }
     options.signal.throwIfAborted();
+    if (webTarget) {
+      await sendFromWeb(job, webTarget, session, payload, files, options, lang);
+      return;
+    }
     const completion = await window.fetch(`${API}/api/chat/completions`, {
       ...options, method: "POST", headers: { ...options.headers, "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -375,7 +540,7 @@
       controller.signal.removeEventListener("abort", cancelled);
       if (controllers.get(job) === controller) controllers.delete(job);
       emit(job, { kind: "done", ...(message ? { message } : {}),
-        ...(code === "unsupported_image_model" ? { code } : {}),
+        ...(["unsupported_image_model", "debug_web_session_unavailable"].includes(code) ? { code } : {}),
         ...(message && op === "setup_create" && !state.createAttempted ? { result: { notCreated: true } } : {}) });
     }
     const cancelled = () => settle("The school request was cancelled.");

@@ -31,12 +31,14 @@ type job struct {
 	events   chan Event
 	finished chan struct{}
 	settings config.Settings
+	capture  *requestCapture
 }
 
 type Options struct {
-	Key      string
-	Settings config.Settings
-	Send     func(any) error
+	Key       string
+	Settings  config.Settings
+	ConfigDir string
+	Send      func(any) error
 }
 
 var errTimeout = errors.New("Request timed out and was cancelled; request was not retried")
@@ -48,10 +50,18 @@ type unsupportedImageModelError string
 
 func (err unsupportedImageModelError) Error() string { return string(err) }
 
+type debugWebSessionUnavailableError string
+
+func (err debugWebSessionUnavailableError) Error() string { return string(err) }
+
 func errorStatus(err error) (int, string) {
 	var unsupported unsupportedImageModelError
 	if errors.As(err, &unsupported) {
 		return 400, "unsupported_image_model"
+	}
+	var unavailable debugWebSessionUnavailableError
+	if errors.As(err, &unavailable) {
+		return 400, "debug_web_session_unavailable"
 	}
 	if errors.Is(err, errInvalidGeneration) {
 		return 502, "invalid_generation"
@@ -167,11 +177,14 @@ func (s *Server) Receive(message map[string]json.RawMessage) error {
 }
 
 func apiError(w http.ResponseWriter, status int, code, message string) {
+	if recorder, ok := w.(*captureWriter); ok {
+		recorder.capture.Error = message
+	}
 	writeJSON(w, status, map[string]any{"error": map[string]any{"message": message, "type": errorType(code), "code": code}})
 }
 
 func errorType(code string) string {
-	if code == "unsupported_image_model" {
+	if code == "unsupported_image_model" || code == "debug_web_session_unavailable" {
 		return "invalid_request_error"
 	}
 	return "bridge_error"
@@ -224,10 +237,23 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	authorized := s.authorized(r.Header.Get("Authorization"))
+	captureEnabled := s.options.Settings.DebugCaptureRequests
 	s.mu.Unlock()
 	if !authorized {
 		apiError(w, 401, "invalid_api_key", "Use the local API key shown in the extension popup")
 		return
+	}
+	if captureEnabled && (chat || responses) {
+		capture := &requestCapture{StartedAt: time.Now().UTC(), Endpoint: r.URL.Path}
+		r = r.WithContext(context.WithValue(r.Context(), captureContextKey{}, capture))
+		w = &captureWriter{ResponseWriter: w, capture: capture}
+		defer func() {
+			if err := r.Context().Err(); err != nil {
+				capture.Error = err.Error()
+			}
+			capture.FinishedAt = time.Now().UTC()
+			capture.save(s.options.ConfigDir)
+		}()
 	}
 	if responses {
 		s.responses(w, r)
@@ -244,7 +270,7 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request, op string, makePa
 		apiError(w, 500, "local_error", "Could not create request identifier")
 		return nil
 	}
-	active := &job{id: hex.EncodeToString(entropy[:]), events: make(chan Event, 32), finished: make(chan struct{})}
+	active := &job{id: hex.EncodeToString(entropy[:]), events: make(chan Event, 32), finished: make(chan struct{}), capture: captureFrom(r.Context())}
 	s.mu.Lock()
 	if !s.authorized(r.Header.Get("Authorization")) {
 		s.mu.Unlock()
@@ -290,6 +316,14 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request, op string, makePa
 		apiError(w, 413, "request_too_large", "Request exceeds the native message limit")
 		return nil
 	}
+	if active.capture != nil {
+		active.capture.SchoolRequest, _ = json.Marshal(payload)
+		active.capture.save(s.options.ConfigDir)
+	}
+	if r.Context().Err() != nil {
+		s.release(active, false)
+		return nil
+	}
 	if err := s.options.Send(request); err != nil {
 		s.release(active, true)
 		apiError(w, 502, "native_disconnected", "The native connection could not send this request")
@@ -328,6 +362,9 @@ func (s *Server) wait(ctx context.Context, active *job, timeout time.Duration, c
 		case <-idle.C:
 			return false, errIdle
 		case event := <-active.events:
+			if active.capture != nil {
+				active.capture.addEvent(event)
+			}
 			if !idle.Stop() {
 				select {
 				case <-idle.C:
@@ -342,6 +379,9 @@ func (s *Server) wait(ctx context.Context, active *job, timeout time.Duration, c
 				}
 				if event.Code == "unsupported_image_model" {
 					return true, unsupportedImageModelError(text)
+				}
+				if event.Code == "debug_web_session_unavailable" {
+					return true, debugWebSessionUnavailableError(text)
 				}
 				return true, errors.New(text)
 			}

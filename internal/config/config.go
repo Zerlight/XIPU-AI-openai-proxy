@@ -26,6 +26,8 @@ type Settings struct {
 	IdleTimeoutSeconds   int    `json:"idle_timeout_seconds"`
 	IncludeReasoning     bool   `json:"include_reasoning"`
 	OmitHistoricalImages bool   `json:"omit_historical_images"`
+	DebugCaptureRequests bool   `json:"debug_capture_requests"`
+	DebugWebSession      bool   `json:"debug_web_session"`
 }
 
 type Config struct {

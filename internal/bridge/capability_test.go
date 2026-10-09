@@ -9,10 +9,10 @@ import (
 	"time"
 )
 
-func TestImageCapabilityErrorStatus(t *testing.T) {
+func TestCapabilityErrorStatus(t *testing.T) {
 	for _, endpoint := range []string{"chat/completions", "responses"} {
 		for _, stream := range []bool{false, true} {
-			for _, code := range []string{"unsupported_image_model", "", "unrecognized_error"} {
+			for _, code := range []string{"unsupported_image_model", "debug_web_session_unavailable", "", "unrecognized_error"} {
 				t.Run(fmt.Sprintf("%s/stream=%v/code=%s", endpoint, stream, code), func(t *testing.T) {
 					s, host, sent := fixture(t, time.Second)
 					input := `"messages":[{"role":"user","content":"Hello"}]`
@@ -23,6 +23,9 @@ func TestImageCapabilityErrorStatus(t *testing.T) {
 					result := request(t, context.Background(), host.URL, "/v1/"+endpoint, body, "synthetic-local-key")
 					job := take(t, sent)
 					event := Event{Job: job["job"].(string), Kind: "done", Code: code, Message: "The model does not advertise image support."}
+					if code == "debug_web_session_unavailable" {
+						event.Message = "Open the configured conversation before using webpage send flow."
+					}
 					raw, err := json.Marshal(event)
 					if err != nil {
 						t.Fatal(err)
@@ -32,7 +35,7 @@ func TestImageCapabilityErrorStatus(t *testing.T) {
 					}
 					got := <-result
 					wantStatus, wantCode, wantType := 502, "upstream_error", "bridge_error"
-					if code == "unsupported_image_model" {
+					if code == "unsupported_image_model" || code == "debug_web_session_unavailable" {
 						wantStatus, wantCode, wantType = 400, code, "invalid_request_error"
 					}
 					var response struct {
