@@ -2,7 +2,7 @@
   "use strict";
   const element = id => document.getElementById(id);
   const modelSelect = BridgeSelect.create(element("model"), [{ value: "", label: "Load models to choose" }]);
-  const watched = ["bridgeStatus", "bridgeError", "baseURL", "apiKey", "hostConfig", "setupProgress", "onboardingComplete"];
+  const watched = ["bridgeStatus", "bridgeError", "baseURL", "apiKey", "hostConfig", "setupProgress", "setupWaiting", "onboardingComplete"];
   let snapshot = {}, models = [], sessionNames = new Set();
   let loaded = false, pending = false, refreshing = false, refreshQueued = false, uncertain = false, progressStamp = "";
   let stage = 1;
@@ -77,10 +77,11 @@
     element("connection-status").textContent = loaded ? label : refreshing ? "Checking connection" : "Status unavailable";
     element("connection-status").dataset.variant = variant;
     element("connection-detail").textContent = !loaded ? refreshing ? "Checking the native app and signed-in tab." : "Refresh to check the connection again."
+      : pending === "cancel" ? "Stopping the wait. A school change may already have completed."
+      : snapshot.setupWaiting === true ? "Waiting briefly before configuring the conversation."
       : pending === "models" ? "Reading available models from XIPU AI."
       : pending === "setup" ? "Preparing your conversation. Keep XIPU AI open."
       : pending === "check" ? "Checking the existing conversation in XIPU AI."
-      : pending === "cancel" ? "Stopping the wait. A school change may already have completed."
       : pending === "reconnect" ? "Connecting to the native app." : detail;
     element("reconnect").disabled = locked || status === "busy" || status === "ready";
     element("check-connection").disabled = refreshing;
@@ -110,7 +111,7 @@
     element("inspect").textContent = pending === "models" ? "Loading models…" : "Load models";
     element("model").disabled = !connected || locked || Boolean(progress) || models.length === 0 || uncertain || invalidProgress;
     element("session-name").disabled = !connected || locked || Boolean(progress) || uncertain || invalidProgress;
-    element("create-session").textContent = pending === "setup" ? "Setting up…" : resumable ? "Resume setup" : "Create bridge session";
+    element("create-session").textContent = snapshot.setupWaiting === true ? "Waiting…" : pending === "setup" ? "Setting up…" : resumable ? "Resume setup" : "Create bridge session";
     element("create-session").disabled = !connected || locked || uncertain || invalidProgress || (progress ? !resumable : !models.some(model => model.id === element("model").value));
     modelSelect.sync();
 

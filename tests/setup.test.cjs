@@ -21,7 +21,7 @@ function mount(initial = {}) {
   }]));
   const state = {
     status: "ready", config: { session_name: "XIPU AI Bridge", default_model: "", port: 8765 },
-    progress: null, session: null, onboardingComplete: false, setupRunning: false, messages: [], handlers: {}, copied: [], opened: 0, clipboardError: false,
+    progress: null, session: null, onboardingComplete: false, setupRunning: false, setupWaiting: false, messages: [], handlers: {}, copied: [], opened: 0, clipboardError: false,
     models: [{ id: "paid-model", name: "Paid model" }, { id: "qwen3.6-27b", name: "Qwen" }], sessions: [], theme: "system", ...initial
   };
   const changed = [];
@@ -30,7 +30,7 @@ function mount(initial = {}) {
     ok: true, bridgeStatus: state.status, bridgeError: "", config: { ...state.config },
     baseURL: "http://127.0.0.1:8765/v1", apiKey: "synthetic-local-key",
     setupProgress: state.progress, setupSession: state.session, onboardingComplete: state.onboardingComplete,
-    setupRunning: state.setupRunning, setupError: state.setupError
+    setupRunning: state.setupRunning, setupWaiting: state.setupWaiting, setupError: state.setupError
   });
   state.complete = (name = "XIPU AI Bridge", model = "qwen3.6-27b") => {
     state.progress = { name, model, phase: "complete", session_id: "created-session" };
@@ -71,7 +71,7 @@ function mount(initial = {}) {
         if (message.type === "inspectSchool") return { ok: true, models: state.models, sessions: state.sessions };
         if (message.type === "setupSchool") return state.complete(message.name, message.model);
         if (message.type === "checkSetup") return snapshot();
-        if (message.type === "cancelSetup") { state.setupRunning = false; state.status = "ready"; return snapshot(); }
+        if (message.type === "cancelSetup") { state.setupRunning = false; state.setupWaiting = false; state.status = "ready"; return snapshot(); }
         if (message.type === "reconnect") return { ok: true };
         throw new Error(`Unexpected message: ${message.type}`);
       }
@@ -390,6 +390,37 @@ test("reopening an active setup preserves its step and exposes local recovery co
   assert.equal(ui.get("check-connection").disabled, false);
   assert.equal(ui.get("recovery").hidden, true);
   assert.match(ui.get("connection-detail").textContent, /Setup is running/);
+});
+
+test("configuration pause follows stored state and keeps cancellation available", async () => {
+  const ui = mount({ status: "busy", setupRunning: true, progress: { name: "XIPU AI Bridge", model: "qwen3.6-27b", phase: "created", session_id: "created-session" } }); await tick();
+  ui.state.setupWaiting = true;
+  ui.state.emit({ setupWaiting: {} }); await tick();
+  assert.equal(ui.get("connection-detail").textContent, "Waiting briefly before configuring the conversation.");
+  assert.equal(ui.get("create-session").textContent, "Waiting…");
+  assert.equal(ui.get("create-session").disabled, true);
+  assert.equal(ui.get("stop-waiting").hidden, false);
+  assert.equal(ui.get("stop-waiting").disabled, false);
+  ui.state.setupWaiting = false;
+  ui.state.emit({ setupWaiting: {} }); await tick();
+  assert.match(ui.get("connection-detail").textContent, /Setup is running/);
+  assert.notEqual(ui.get("create-session").textContent, "Waiting…");
+  ui.state.setupWaiting = true;
+  ui.state.emit({ setupWaiting: {} }); await tick();
+  let resolveCancel;
+  ui.state.handlers.cancelSetup = () => new Promise(resolve => { resolveCancel = resolve; });
+  const cancel = ui.click("stop-waiting");
+  assert.match(ui.get("connection-detail").textContent, /Stopping the wait/);
+  assert.equal(ui.get("stop-waiting").disabled, true);
+  ui.state.setupRunning = false;
+  ui.state.setupWaiting = false;
+  ui.state.status = "ready";
+  resolveCancel(ui.snapshot()); await cancel;
+  assert.equal(ui.get("create-session").textContent, "Resume setup");
+  assert.equal(ui.get("create-session").disabled, false);
+  assert.equal(ui.get("stop-waiting").hidden, true);
+  assert.equal(ui.state.messages.filter(message => message.type === "cancelSetup").length, 1);
+  assert.equal(ui.state.messages.some(message => message.type === "setupSchool"), false);
 });
 
 test("invalid saved setup state leaves local status and manual settings available", async () => {

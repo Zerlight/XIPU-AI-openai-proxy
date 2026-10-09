@@ -95,6 +95,7 @@ async function main() {
   let uploadFails = false, ignoreModelSave = false;
   let schoolSession = { ...session };
   let setupSession;
+  let setupCreatedAt;
   const uploadedURL = 'https://tosai.xjtlu.edu.cn/synthetic-image.png';
   const png = imageFixture();
   const window = {
@@ -125,9 +126,11 @@ async function main() {
           assert.deepEqual(body, { name: 'New dedicated session', lang: 'en' });
           assert.equal(setupSession, undefined, 'setup must not create duplicate conversations');
           setupSession = { id: '9', name: body.name, model: 'school-default', contextCount: 5, prompt: 'Default school prompt', temperature: 0.4 };
+          setupCreatedAt = performance.now();
           return new Response(JSON.stringify({ code: 0, data: { ...setupSession, id: 9 } }));
         }
         if (body.id === '9') {
+          assert.ok(performance.now() - setupCreatedAt >= 2900, 'configuration must leave a gap after creation');
           assert.deepEqual(body, { ...setupSession, model, contextCount: 0, prompt: '', lang: 'en' });
           setupSession = { ...setupSession, model, contextCount: 0, prompt: '' };
           return new Response(JSON.stringify({ code: 0 }));

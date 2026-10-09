@@ -6,9 +6,11 @@ const ORIGINS = new Set([
 const ports = new Set();
 const pending = new Map();
 const CHUNK_BYTES = 256 * 1024, MAX_REQUEST_BYTES = 24 * 1024 * 1024;
+const SETUP_CONFIGURE_GAP_MS = 3000;
 let nativePort = null, nativeReady = false, current = null;
 let reconnectTimer = null, reconnectAttempts = 0, sequence = 0;
 let setupRunning = false, setupCancelled = false, setupProgress = null, onboardingComplete = false, setupLoadError = "";
+let setupWait = null;
 const setupText = value => typeof value === "string" && value.trim() === value && value.length > 0 && [...value].length <= 200 && !/[\u0000-\u001f\u007f]/.test(value);
 const setupID = value => typeof value === "string" ? !!value.trim() && value.trim() === value : Number.isSafeInteger(value) && value > 0;
 let snapshot = { config: null, baseURL: "", apiKey: "", restartRequired: false, bridgeStatus: "offline", bridgeError: "" };
@@ -34,7 +36,7 @@ function trustedPage(port) {
 function renderStatus(error = "") {
   snapshot.bridgeStatus = current || setupRunning ? "busy" : nativeReady ? (ports.size ? "ready" : "no-tab") : "offline";
   snapshot.bridgeError = error;
-  chrome.storage.local.set({ bridgeStatus: snapshot.bridgeStatus, bridgeError: error });
+  chrome.storage.local.set({ bridgeStatus: snapshot.bridgeStatus, bridgeError: error, setupWaiting: setupWait !== null });
 }
 
 function sendNative(message) {
@@ -275,7 +277,7 @@ function schoolOperation(op = "inspect", payload = {}) {
 }
 
 function setupState() {
-  return { ...snapshot, setupProgress, onboardingComplete, setupRunning: setupRunning || current?.target === "ui", setupError: setupLoadError,
+  return { ...snapshot, setupProgress, onboardingComplete, setupRunning: setupRunning || current?.target === "ui", setupWaiting: setupWait !== null, setupError: setupLoadError,
     setupSession: setupProgress?.phase === "complete" && snapshot.config?.session_name === setupProgress.name && snapshot.config?.default_model === setupProgress.model
       ? { id: setupProgress.session_id, name: setupProgress.name, model: setupProgress.model, contextCount: 0 } : null };
 }
@@ -293,6 +295,22 @@ async function completeOnboarding() {
 
 function continueSetup() {
   if (setupCancelled) throw new Error("Setup stopped. A school change may have completed. Check setup before resuming.");
+}
+
+function waitBeforeConfiguration() {
+  // Creation and configuration share the school save endpoint; avoid back-to-back writes.
+  return new Promise(resolve => {
+    const finish = () => {
+      if (setupWait !== finish) return;
+      clearTimeout(timer);
+      setupWait = null;
+      renderStatus();
+      resolve();
+    };
+    const timer = setTimeout(finish, SETUP_CONFIGURE_GAP_MS);
+    setupWait = finish;
+    renderStatus();
+  });
 }
 
 async function checkSetup() {
@@ -353,6 +371,8 @@ async function setupSchool(message) {
     }
     continueSetup();
     if (setupProgress.phase === "created") {
+      await waitBeforeConfiguration();
+      continueSetup();
       const result = await schoolOperation("setup_configure", setupProgress);
       const session = result.session;
       if (!setupID(session?.id) || String(session.id) !== String(setupProgress.session_id)
@@ -374,6 +394,7 @@ async function handleUI(message) {
   if (message.type === "getSetupState") { await setupStorage; return setupState(); }
   if (message.type === "cancelSetup") {
     if (setupRunning) setupCancelled = true;
+    setupWait?.();
     if (current?.target === "ui") cancelPage("Stopped waiting. A school change may have completed. Check setup before resuming.");
     return setupState();
   }

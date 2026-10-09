@@ -51,7 +51,8 @@ async function harness(options = {}) {
     } } }
   };
   vm.runInNewContext(source, { chrome, URL, TextDecoder, atob, btoa,
-    setTimeout: options.fakeTimers ? (fn, delay) => { const id = ++timerID; timers.set(id, { fn, delay }); return id; } : setTimeout,
+    setTimeout: options.fakeTimers ? (fn, delay) => { const id = ++timerID; timers.set(id, { fn, delay }); return id; }
+      : (fn, delay) => setTimeout(fn, delay === 3000 ? 0 : delay),
     clearTimeout: options.fakeTimers ? id => timers.delete(id) : clearTimeout });
   await flush();
   native.onMessage.emit({ type: 'ready', config, api_key: 'synthetic-local-key', base_url: 'http://127.0.0.1:9900/v1' });
@@ -60,6 +61,66 @@ async function harness(options = {}) {
   return { ui, calls, stored, config: () => config, nativeEvents, opened, chrome, cancelled, held, timers, page, native };
 }
 const setup = { type: 'setupSchool', name: 'New bridge', model: 'model-a' };
+
+test('configuration waits after creation and each explicit resume without retrying a rejection', async () => {
+  const h = await harness({ fakeTimers: true, failConfigure: true });
+  const first = h.ui(setup); await flush();
+  assert.deepEqual(h.calls.map(call => call.op), ['inspect', 'setup_create']);
+  assert.equal(h.stored.setupProgress.phase, 'created');
+  const waiting = await h.ui({ type: 'getSetupState' });
+  assert.equal(waiting.setupWaiting, true);
+  assert.equal(waiting.setupRunning, true);
+  assert.equal(waiting.bridgeStatus, 'busy');
+  assert.equal(h.stored.setupWaiting, true);
+  assert.equal((await h.ui({ type: 'checkSetup' })).ok, false);
+  h.native.onMessage.emit({ type: 'req', job: 'during-gap', op: 'chat', payload: {} });
+  assert.match(h.nativeEvents.at(-1).evt.message, /busy/);
+  const gap = [...h.timers.values()].find(timer => timer.delay === 3000);
+  assert.ok(gap);
+  gap.fn();
+  assert.equal((await first).ok, false);
+  assert.equal(h.calls.filter(call => call.op === 'setup_configure').length, 1);
+  assert.equal(h.timers.size, 0, 'a rejected configuration must not schedule a retry');
+  assert.equal(h.stored.setupWaiting, false);
+  assert.equal((await h.ui({ type: 'getSetupState' })).setupRunning, false);
+
+  const resumed = h.ui(setup); await flush();
+  assert.equal(h.calls.filter(call => call.op === 'setup_create').length, 1);
+  assert.equal(h.calls.filter(call => call.op === 'setup_configure').length, 1);
+  gap.fn();
+  assert.equal((await h.ui({ type: 'getSetupState' })).setupWaiting, true, 'an old callback cannot end a later wait');
+  [...h.timers.values()].find(timer => timer.delay === 3000).fn();
+  assert.equal((await resumed).ok, true);
+  assert.equal(h.calls.filter(call => call.op === 'setup_configure').length, 2);
+});
+
+test('stopping the configuration gap cancels its timer and preserves the session for resume', async () => {
+  const h = await harness({ fakeTimers: true });
+  const running = h.ui(setup); await flush();
+  const gap = [...h.timers.values()].find(timer => timer.delay === 3000);
+  assert.ok(gap);
+  await h.ui({ type: 'cancelSetup' });
+  assert.match((await running).error, /stopped/);
+  assert.equal(h.timers.size, 0);
+  gap.fn(); await flush();
+  assert.deepEqual(h.calls.map(call => call.op), ['inspect', 'setup_create']);
+  assert.equal(h.stored.setupProgress.phase, 'created');
+  assert.equal(h.stored.setupProgress.session_id, 9);
+  const state = await h.ui({ type: 'getSetupState' });
+  assert.equal(state.setupWaiting, false);
+  assert.equal(state.setupRunning, false);
+  assert.equal(state.bridgeStatus, 'ready');
+  assert.equal(h.cancelled.length, 0, 'no school request was active during the gap');
+});
+
+test('resuming a local save skips the school configuration gap', async () => {
+  const h = await harness({ fakeTimers: true, stored: { setupProgress: {
+    name: setup.name, model: setup.model, phase: 'configured', session_id: 9
+  } } });
+  assert.equal((await h.ui(setup)).ok, true);
+  assert.deepEqual(h.calls.map(call => call.op), ['config_set']);
+  assert.equal(h.timers.size, 0);
+});
 
 test('setup persists identity before configuration and saves only verified host fields', async () => {
   const h = await harness({ interrupt(native) { native.onMessage.emit({ type: 'req', job: 'overlap', op: 'chat', payload: {} }); } });

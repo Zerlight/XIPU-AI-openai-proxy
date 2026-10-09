@@ -38,7 +38,8 @@ function startPreview(startPath = "/") {
           apiKey: "preview-only-key-not-valid", baseURL: "http://127.0.0.1:8765/v1",
           sessionName: "XIPU AI Bridge", transport: "native-messaging", theme: previewParams.get("theme") || "system",
           restartRequired: false, onboardingComplete: previewParams.get("onboarded") === "1",
-          setupRunning: previewParams.get("waiting") === "1"
+          setupRunning: previewParams.get("waiting") === "1",
+          setupWaiting: previewParams.get("waiting") === "1" && previewParams.get("phase") === "created"
         };
         let setupFailedOnce = false;
         const initialPhase = previewParams.get("phase");
@@ -72,7 +73,7 @@ function startPreview(startPath = "/") {
               }
               if (type === "skipSetup") { publish({onboardingComplete:true}); return {ok:true}; }
               if (type === "getSetupState") return snapshot();
-              if (type === "cancelSetup") { publish({setupRunning:false,bridgeStatus:"ready"}); return snapshot(); }
+              if (type === "cancelSetup") { publish({setupRunning:false,setupWaiting:false,bridgeStatus:"ready"}); return snapshot(); }
               if (type === "reconnect") {
                 publish({bridgeStatus:"offline"});
                 setTimeout(() => { activePort = previewConfig.port; publish({bridgeStatus:"ready", baseURL:"http://127.0.0.1:" + activePort + "/v1", restartRequired:false}); }, 50);

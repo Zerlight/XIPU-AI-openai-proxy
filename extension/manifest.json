@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "XIPU AI Bridge",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqBAmAUN4sQgExy70AHzHvKlEy/+mdsCShjWawp918uCd1k6AKUaKI4MckVBmDroa7HFUy7KzwhefoPJ5bjYErORShwjcMh43fLRz6PTVH6pKY8Yo3nd24rw+1qFZ+UMTe5U0d7RjoUJqrPy4jfOxbOtgCjuUQ5+KomVEdvIHccuwDWeFqM2oWxbZq4UnC9hFQ1nL/mRzg6S08B2zCo4Ne03DUs1dKwv9DgehelZIZ2Qa8rpt3cPcFgjtG6tgpo0PifpugjTPsoJE/hy07j7dKMmAOImGDI+F5CfIA54IHoviCYd9GChduztwDeJ/ZdkoqCaPUIO0SWm5Mc//w2vihwIDAQAB",
   "description": "Relay the logged-in XIPU AI tab to a local OpenAI-compatible endpoint.",
   "icons": {
