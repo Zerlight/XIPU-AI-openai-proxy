@@ -8,7 +8,7 @@
   const numeric = { port: [1, 65535], chat_timeout_seconds: [10, 1800], model_timeout_seconds: [5, 120], idle_timeout_seconds: [5, 600] };
   const labels = { ready: ["Connected", "success"], busy: ["Request in progress", "info"], offline: ["Offline", "secondary"], "no-tab": ["Open XIPU AI", "warning"] };
   const element = id => document.getElementById(id);
-  const sections = ["general", "connection", "advanced"];
+  const sections = ["general", "connection", "advanced", "appearance"];
   const selects = {
     thinking: BridgeSelect.create(element("thinking"), [
       { value: "minimal", label: "Minimal" }, { value: "low", label: "Low" },
@@ -21,9 +21,12 @@
   };
   let loaded = false, pending = false, dirty = false, status = "offline", restartRequired = false;
   let saved = null, sessions = [], loading = 0, refreshAfterOperation = false;
+  let noticeTimer;
 
   function selectSection(section, focus = false) {
     for (const select of Object.values(selects)) select.close();
+    element("native-settings").hidden = section === "appearance";
+    element("save-bar").hidden = section === "appearance";
     for (const name of sections) {
       const active = name === section;
       element(`panel-${name}`).hidden = !active;
@@ -39,15 +42,22 @@
     if (refreshAfterOperation) { refreshAfterOperation = false; loadSettings(false); }
   }
 
-  function message(id, text) {
-    element(id).textContent = text;
+  function message(id, text, variant = "success") {
+    element(`${id}-text`).textContent = text;
+    if (id === "notice") {
+      clearTimeout(noticeTimer);
+      element(id).dataset.variant = variant;
+      element("notice-symbol").setAttribute("d", variant === "success" ? "m8 12 3 3 5-6" : "M12 11v5m0-8h.01");
+    }
     element(id).hidden = !text;
   }
 
-  function hideKey() {
-    element("api-key").type = "password";
-    element("show-key").textContent = "Show";
-    element("show-key").setAttribute("aria-pressed", "false");
+  function setKeyVisible(visible) {
+    element("api-key").type = visible ? "text" : "password";
+    const label = visible ? "Hide API key" : "Show API key";
+    element("show-key").setAttribute("aria-label", label);
+    element("show-key").setAttribute("title", label);
+    element("show-key").setAttribute("aria-pressed", String(visible));
   }
 
   function updateControls() {
@@ -125,7 +135,7 @@
     status = Object.hasOwn(labels, response.bridgeStatus) ? response.bridgeStatus : "ready";
     restartRequired = response.restartRequired === true;
     element("base-url").value = response.baseURL || "";
-    if (element("api-key").value !== (response.apiKey || "")) hideKey();
+    if (element("api-key").value !== (response.apiKey || "")) setKeyVisible(false);
     element("api-key").value = response.apiKey || "";
     if (replaceForm) { setForm(saved); dirty = false; }
     updateControls();
@@ -164,6 +174,7 @@
       const response = await BridgeUI.request("saveSettings", { config });
       applyResponse(response, true);
       message("notice", "Settings saved.");
+      noticeTimer = setTimeout(() => message("notice", ""), 10000);
     } catch (error) {
       message("error", error.message || "Could not save settings. Your changes are still in the form.");
     } finally { finishOperation(); }
@@ -175,7 +186,7 @@
     updateControls();
     try {
       await BridgeUI.request("reconnect");
-      message("notice", "Reconnecting. Saved settings will apply when the native app starts.");
+      message("notice", "Reconnecting. Saved settings will apply when the native app starts.", "info");
     } catch (error) { message("error", error.message || "Could not reconnect."); }
     finally { finishOperation(); }
   }
@@ -231,7 +242,7 @@
     try {
       const response = await BridgeUI.request("rotateKey");
       if (typeof response.apiKey !== "string" || !response.apiKey) throw new Error("The native app did not return a new key.");
-      hideKey();
+      setKeyVisible(false);
       element("api-key").value = response.apiKey;
       element("rotate-confirm").hidden = true;
       message("error", "");
@@ -272,7 +283,7 @@
   element("settings-form").addEventListener("submit", save);
   element("settings-form").addEventListener("input", markDirty);
   element("reload").addEventListener("click", () => loadSettings(true));
-  element("reset").addEventListener("click", () => { if (!loaded || pending || status === "offline") return; setForm(defaults); markDirty(); message("notice", "Defaults loaded in the form. Save changes to apply them."); });
+  element("reset").addEventListener("click", () => { if (!loaded || pending || status === "offline") return; setForm(defaults); markDirty(); message("notice", "Defaults loaded in the form. Save changes to apply them.", "info"); });
   element("reconnect").addEventListener("click", reconnect);
   element("restart-now").addEventListener("click", reconnect);
   element("inspect").addEventListener("click", inspect);
@@ -283,13 +294,10 @@
     element("session_name").value = session.name;
     element("default_model").value = session.model;
     markDirty();
-    message("notice", "Session details added to the form. Save changes to apply them.");
+    message("notice", "Session details added to the form. Save changes to apply them.", "info");
   });
   element("show-key").addEventListener("click", () => {
-    if (element("api-key").type === "text") return hideKey();
-    element("api-key").type = "text";
-    element("show-key").textContent = "Hide";
-    element("show-key").setAttribute("aria-pressed", "true");
+    setKeyVisible(element("api-key").type !== "text");
   });
   element("copy-url").addEventListener("click", () => copy("base-url", "Base URL"));
   element("copy-key").addEventListener("click", () => copy("api-key", "API key"));
@@ -300,13 +308,13 @@
     try { await BridgeUI.setTheme(element("theme").value); }
     catch (error) { message("error", error.message); }
   });
-  document.addEventListener("visibilitychange", () => { if (document.hidden) hideKey(); });
+  document.addEventListener("visibilitychange", () => { if (document.hidden) setKeyVisible(false); });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
     const previous = status;
     if (changes.bridgeStatus) status = Object.hasOwn(labels, changes.bridgeStatus.newValue) ? changes.bridgeStatus.newValue : "offline";
     if (changes.baseURL) element("base-url").value = changes.baseURL.newValue || "";
-    if (changes.apiKey) { hideKey(); element("api-key").value = changes.apiKey.newValue || ""; }
+    if (changes.apiKey) { setKeyVisible(false); element("api-key").value = changes.apiKey.newValue || ""; }
     if (changes.restartRequired) restartRequired = changes.restartRequired.newValue === true;
     if (changes.bridgeError?.newValue) message("error", changes.bridgeError.newValue);
     updateControls();

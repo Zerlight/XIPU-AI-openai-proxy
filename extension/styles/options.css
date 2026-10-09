@@ -11,10 +11,13 @@ h3, .row-title, label { font-size: .8125rem; font-weight: 500; }
 .settings-layout { display: grid; grid-template-columns: 144px minmax(0, 1fr); gap: 24px; margin-top: 20px; }
 .settings-nav { align-self: start; position: sticky; top: 20px; }
 .settings-tabs { display: flex; flex-direction: column; gap: 3px; }
-.settings-tabs [role="tab"] { width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground); font: 500 .8125rem/1.4 var(--font-sans); text-align: left; cursor: pointer; }
-.settings-tabs [role="tab"]:hover { background: var(--accent); color: var(--foreground); }
+.settings-tabs [role="tab"], .settings-nav-link { width: 100%; padding: 8px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground); font: 500 .8125rem/1.4 var(--font-sans); text-align: left; cursor: pointer; }
+.settings-tabs [role="tab"]:hover, .settings-nav-link:hover { background: var(--accent); color: var(--foreground); }
 .settings-tabs [role="tab"][aria-selected="true"] { background: var(--muted); color: var(--foreground); }
-.settings-tabs [role="tab"]:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.settings-tabs [role="tab"]:focus-visible, .settings-nav-link:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.settings-nav-footer { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.settings-nav-link { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.settings-nav-link svg { width: 16px; height: 16px; flex-shrink: 0; }
 .settings-content, form, fieldset, [role="tabpanel"] { min-width: 0; }
 .settings-content, form, [role="tabpanel"] { display: flex; flex-direction: column; gap: 14px; }
 fieldset { margin: 0; padding: 0; border: 0; }
@@ -33,17 +36,17 @@ fieldset:disabled [data-slot="frame-panel"] { opacity: .65; }
 .number-control { max-width: 112px; }
 .mono { font-family: var(--font-mono); font-size: .75rem; }
 .control-row > [data-slot="input-control"] { flex: 1; }
+#show-key[aria-pressed="false"] .eye-slash { display: none; }
 .control-stack { flex-direction: column; align-items: flex-end; gap: 7px; }
 .control-stack > [data-slot="button"] { align-self: flex-end; }
 .button-row { flex-wrap: wrap; }
 .panel-note { padding: 0 19px 12px; }
 .inset-alert { margin: 0 12px 12px; width: auto; }
-#rotate-confirm { gap: 10px; }
-#rotate-confirm h3 { font-size: .875rem; }
+#rotate-confirm [data-slot="alert-action"] { grid-column: 2; grid-row: auto; justify-content: flex-end; margin-top: 10px; }
+#rotate-confirm { grid-template-columns: 1rem minmax(0, 1fr); }
 .save-bar { position: sticky; bottom: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 12px 24px; border-top: 1px solid var(--border); background: var(--background); }
 #save-state { color: var(--muted-foreground); font-size: .75rem; }
 #error, #notice, #restart { margin-top: 12px; overflow-wrap: anywhere; }
-#restart { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 footer { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 12px; padding-inline: 24px; color: var(--muted-foreground); font-size: .6875rem; }
 code { font-family: var(--font-mono); font-size: .625rem; overflow-wrap: anywhere; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
@@ -59,6 +62,8 @@ code { font-family: var(--font-mono); font-size: .625rem; overflow-wrap: anywher
   .settings-nav { position: static; }
   .settings-tabs { flex-direction: row; gap: 4px; }
   .settings-tabs [role="tab"] { width: auto; flex: 1; text-align: center; }
+  .settings-nav-footer { margin-top: 8px; padding-top: 8px; }
+  .settings-nav-link { width: auto; margin-left: auto; }
   .setting-row { grid-template-columns: minmax(0, 1fr) minmax(220px, 280px); }
 }
 @media (max-width: 520px) {
@@ -71,5 +76,7 @@ code { font-family: var(--font-mono); font-size: .625rem; overflow-wrap: anywher
   .save-bar { align-items: flex-start; flex-direction: column; gap: 9px; }
   .save-bar .button-row { width: 100%; }
   .save-bar .button-row [data-slot="button"] { flex: 1; }
-  #restart { flex-direction: column; align-items: flex-start; }
+}
+@media (max-width: 380px) {
+  .settings-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

@@ -12,6 +12,8 @@ const initialConfig = () => ({ session_name: "Native session", port: 9876, defau
 
 function mount(status = "ready") {
   let document;
+  let now = 0, nextTimer = 0;
+  const timers = new Map();
   const makeElement = (id = "") => ({
     id, value: "", textContent: "", dataset: {}, attributes: {}, listeners: {}, children: [], disabled: false,
     hidden: ["error", "notice", "restart", "rotate-confirm", "discovery-results"].includes(id), checked: false,
@@ -52,10 +54,12 @@ function mount(status = "ready") {
     emit(changes) { for (const listener of changed) listener(changes, "local"); }
   };
   state.media = { matches: false, addEventListener(name, callback) { this.listener = callback; } };
-  document = { hidden: false, documentElement: { dataset: {} }, getElementById: id => elements.get(id), createElement: () => makeElement(), addEventListener() {} };
+  document = { hidden: false, listeners: {}, documentElement: { dataset: {} }, getElementById: id => elements.get(id), createElement: () => makeElement(), addEventListener(name, callback) { this.listeners[name] = callback; } };
   const snapshot = () => ({ ok: true, config: { ...state.config }, bridgeStatus: state.status, bridgeError: "", baseURL: `http://127.0.0.1:${state.config.port}/v1`, apiKey: state.apiKey, restartRequired: state.restartRequired });
   const context = vm.createContext({
     document,
+    setTimeout(callback, delay) { const id = ++nextTimer; timers.set(id, { callback, deadline: now + delay }); return id; },
+    clearTimeout(id) { timers.delete(id); },
     BridgeSelect,
     matchMedia: () => state.media,
     chrome: {
@@ -87,6 +91,7 @@ function mount(status = "ready") {
   vm.runInContext(source, context);
   return {
     state, document, selects, get: id => elements.get(id), click: id => elements.get(id).listeners.click(),
+    advance(ms) { now += ms; for (const [id, timer] of [...timers]) if (timer.deadline <= now) { timers.delete(id); timer.callback(); } },
     edit(id, value) { const target = elements.get(id); if (typeof value === "boolean") target.checked = value; else target.value = String(value); elements.get("settings-form").listeners.input({ target }); },
     submit: () => elements.get("settings-form").listeners.submit({ preventDefault() {} })
   };
@@ -112,13 +117,49 @@ test("loads native settings, masks the key, and saves a validated explicit draft
   assert.equal(ui.get("thinking").textContent, "High");
   assert.equal(ui.get("restart").hidden, false);
   assert.equal(ui.get("save-state").textContent, "All changes saved");
-  assert.equal(ui.get("notice").textContent, "Settings saved.");
+  assert.equal(ui.get("notice-text").textContent, "Settings saved.");
+  assert.equal(ui.get("notice").hidden, false);
+  assert.equal(ui.get("notice").dataset.variant, "success");
 });
 
 test("setup stays accessible without the native app", async () => {
   const ui = mount("offline"); await tick();
   await ui.click("setup");
   assert.equal(ui.state.messages.at(-1).type, "openSetup");
+});
+
+test("saved notice hides after ten seconds and a new save restarts the timer", async () => {
+  const ui = mount(); await tick();
+  ui.edit("port", 8766);
+  await ui.submit();
+  ui.advance(9999);
+  assert.equal(ui.get("notice").hidden, false);
+  ui.advance(1);
+  assert.equal(ui.get("notice").hidden, true);
+  assert.equal(ui.get("restart").hidden, false);
+  ui.edit("session_name", "First save");
+  await ui.submit();
+  ui.advance(5000);
+  ui.edit("session_name", "Second save");
+  await ui.submit();
+  ui.advance(9999);
+  assert.equal(ui.get("notice").hidden, false);
+  ui.advance(1);
+  assert.equal(ui.get("notice").hidden, true);
+});
+
+test("the saved-notice timer cannot dismiss a replacement notice or an error", async () => {
+  const ui = mount(); await tick();
+  ui.edit("session_name", "Saved session");
+  await ui.submit();
+  ui.advance(5000);
+  await ui.click("copy-key");
+  ui.state.emit({ bridgeError: { newValue: "The native app disconnected." } });
+  ui.advance(10000);
+  assert.equal(ui.get("notice").hidden, false);
+  assert.equal(ui.get("notice-text").textContent, "API key copied.");
+  assert.equal(ui.get("error").hidden, false);
+  assert.equal(ui.get("error-text").textContent, "The native app disconnected.");
 });
 
 test("image history reads the saved preference and defaults missing values to off", async () => {
@@ -146,7 +187,9 @@ test("failed saves preserve the draft and do not claim success", async () => {
   assert.equal(ui.state.config.omit_historical_images, false);
   assert.equal(ui.get("omit_historical_images").checked, true);
   assert.equal(ui.get("save-state").textContent, "Unsaved changes");
-  assert.equal(ui.get("error").textContent, "Native app is busy.");
+  assert.equal(ui.get("error-text").textContent, "Native app is busy.");
+  assert.equal(ui.get("error").hidden, false);
+  assert.equal(ui.get("notice").hidden, true);
   assert.equal(ui.get("save").disabled, false);
 });
 
@@ -169,7 +212,7 @@ test("validates whole-number ranges, required session and timeout relationship",
     await ui.click("reload");
     ui.edit(id, value);
     await ui.submit();
-    assert.match(ui.get("error").textContent, error);
+    assert.match(ui.get("error-text").textContent, error);
     assert.equal(ui.get(id).attributes["aria-invalid"], "true");
   }
   assert.equal(ui.state.messages.filter(message => message.type === "saveSettings").length, 0);
@@ -190,7 +233,8 @@ test("status updates preserve unsaved edits; reset defaults only changes the for
   assert.equal(ui.get("omit_historical_images").checked, false);
   assert.equal(ui.state.config.omit_historical_images, true);
   assert.equal(ui.state.config.session_name, "Native session");
-  assert.match(ui.get("notice").textContent, /Save changes to apply/);
+  assert.match(ui.get("notice-text").textContent, /Save changes to apply/);
+  assert.equal(ui.get("notice").dataset.variant, "info");
   assert.equal(ui.state.messages.filter(message => message.type === "saveSettings").length, 0);
   await ui.submit();
   assert.equal(ui.state.config.omit_historical_images, false);
@@ -220,6 +264,27 @@ test("read-only discovery disables unsafe sessions and only fills a draft", asyn
   assert.equal(ui.get("use-session").disabled, true);
 });
 
+test("key icon actions keep accessible labels and remask when the page is hidden", async () => {
+  const ui = mount(); await tick();
+  assert.equal(ui.get("show-key").attributes["aria-label"], "Show API key");
+  await ui.click("show-key");
+  assert.equal(ui.get("api-key").type, "text");
+  assert.equal(ui.get("show-key").attributes["aria-label"], "Hide API key");
+  assert.equal(ui.get("show-key").attributes.title, "Hide API key");
+  assert.equal(ui.get("show-key").attributes["aria-pressed"], "true");
+  await ui.click("show-key");
+  assert.equal(ui.get("api-key").type, "password");
+  await ui.click("show-key");
+  ui.document.hidden = true;
+  ui.document.listeners.visibilitychange();
+  assert.equal(ui.get("api-key").type, "password");
+  assert.equal(ui.get("show-key").attributes["aria-label"], "Show API key");
+  assert.equal(ui.get("show-key").attributes["aria-pressed"], "false");
+  await ui.click("copy-key");
+  assert.deepEqual(ui.state.copied, ["synthetic-key-before"]);
+  assert.equal(ui.get("notice-text").textContent, "API key copied.");
+});
+
 test("key replacement requires confirmation and preserves the key on failure", async () => {
   const ui = mount(); await tick();
   await ui.click("confirm-rotate");
@@ -232,16 +297,22 @@ test("key replacement requires confirmation and preserves the key on failure", a
   assert.equal(ui.get("api-key").value, "synthetic-key-before");
   assert.equal(ui.get("rotate-confirm").hidden, false);
   delete ui.state.errors.rotateKey;
+  await ui.click("show-key");
   await ui.click("confirm-rotate");
   assert.equal(ui.get("api-key").value, "synthetic-key-after");
   assert.equal(ui.get("api-key").type, "password");
+  assert.equal(ui.get("show-key").attributes["aria-label"], "Show API key");
   assert.equal(ui.get("rotate-confirm").hidden, true);
   await ui.click("copy-key");
   assert.deepEqual(ui.state.copied, ["synthetic-key-after"]);
 });
 
-test("appearance persists immediately and rolls back after storage failure", async () => {
-  const ui = mount(); await tick();
+test("appearance works offline, persists immediately and rolls back after storage failure", async () => {
+  const ui = mount("offline"); await tick();
+  await ui.click("tab-appearance");
+  assert.equal(ui.get("panel-appearance").hidden, false);
+  assert.equal(ui.get("native-settings").disabled, true);
+  assert.equal(ui.get("save-bar").hidden, true);
   ui.get("theme").value = "dark";
   await ui.get("theme").listeners.change();
   assert.equal(ui.document.documentElement.dataset.theme, "dark");
@@ -253,7 +324,7 @@ test("appearance persists immediately and rolls back after storage failure", asy
   assert.equal(ui.document.documentElement.dataset.theme, "dark");
   assert.equal(ui.get("theme").value, "dark");
   assert.equal(ui.get("theme").textContent, "Dark");
-  assert.match(ui.get("error").textContent, /save appearance/);
+  assert.match(ui.get("error-text").textContent, /save appearance/);
   assert.equal(ui.state.messages.filter(message => message.type === "saveSettings").length, 0);
 });
 
@@ -319,8 +390,15 @@ test("section tabs support keyboard navigation without losing unsaved values", a
   assert.equal(ui.get("tab-general").tabIndex, -1);
   assert.equal(ui.document.activeElement, ui.get("tab-connection"));
   ui.get("tab-connection").listeners.keydown({ key: "End", preventDefault() {} });
-  assert.equal(ui.get("panel-advanced").hidden, false);
+  assert.equal(ui.get("panel-appearance").hidden, false);
+  assert.equal(ui.get("panel-advanced").hidden, true);
+  assert.equal(ui.get("native-settings").hidden, true);
+  assert.equal(ui.get("save-bar").hidden, true);
+  assert.equal(ui.document.activeElement, ui.get("tab-appearance"));
   await ui.click("tab-general");
+  assert.equal(ui.get("panel-appearance").hidden, true);
+  assert.equal(ui.get("native-settings").hidden, false);
+  assert.equal(ui.get("save-bar").hidden, false);
   assert.equal(ui.get("default_model").value, "Draft model");
   assert.equal(ui.get("save-state").textContent, "Unsaved changes");
   assert.deepEqual(ui.state.messages.map(message => message.type), ["getSettings"]);

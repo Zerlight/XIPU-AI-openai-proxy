@@ -14,11 +14,22 @@
   <main>
     <header class="page-header">
       <div><p class="brand"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" fill="currentColor" focusable="false"><path d="M2 21h3.5l4.65-10.63A4 4 0 0 1 13.81 8h4.38a4 4 0 0 1 3.66 2.37L26.5 21H30v5h-6.77l-5.69-13h-3.08L8.77 26H2z"/></svg></span><span class="brand-title">XIPU AI Bridge</span></p><h1>Settings</h1><p class="description">Preferences for this computer.</p></div>
-      <div class="connection-state"><button id="setup" data-slot="button" data-variant="outline" type="button">Setup</button><span id="status" data-slot="badge" data-variant="secondary" role="status">Connecting</span><button id="reconnect" data-slot="button" data-variant="outline" type="button">Reconnect</button></div>
+      <div class="connection-state"><span id="status" data-slot="badge" data-variant="secondary" role="status">Connecting</span><button id="reconnect" data-slot="button" data-variant="outline" type="button">Reconnect</button></div>
     </header>
-    <div id="error" data-slot="alert" data-variant="error" role="alert" hidden></div>
-    <div id="notice" data-slot="alert" role="status" aria-live="polite" hidden></div>
-    <div id="restart" data-slot="alert" data-variant="warning" role="status" hidden><span>Restart the bridge to apply the saved port, then update your client’s base URL.</span><button id="restart-now" data-slot="button" data-variant="outline" type="button">Restart bridge</button></div>
+    <div id="error" data-slot="alert" data-variant="error" role="alert" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v4m0 4h.01"/></svg>
+      <p id="error-text" data-slot="alert-title"></p>
+    </div>
+    <div id="notice" data-slot="alert" data-variant="success" role="status" aria-live="polite" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path id="notice-symbol" d="m8 12 3 3 5-6"/></svg>
+      <p id="notice-text" data-slot="alert-title"></p>
+    </div>
+    <div id="restart" data-slot="alert" data-variant="warning" role="status" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10.3 4-8 14a2 2 0 0 0 1.7 3h16a2 2 0 0 0 1.7-3l-8-14a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 4h.01"/></svg>
+      <p data-slot="alert-title">Restart required</p>
+      <p data-slot="alert-description">Restart the bridge to apply the saved port, then update your client’s base URL.</p>
+      <div data-slot="alert-action"><button id="restart-now" data-slot="button" data-variant="outline" type="button">Restart bridge</button></div>
+    </div>
 
     <div class="settings-layout">
       <nav class="settings-nav" aria-label="Settings sections">
@@ -26,6 +37,10 @@
           <button id="tab-general" type="button" role="tab" aria-selected="true" aria-controls="panel-general" tabindex="0">General</button>
           <button id="tab-connection" type="button" role="tab" aria-selected="false" aria-controls="panel-connection" tabindex="-1">Connection</button>
           <button id="tab-advanced" type="button" role="tab" aria-selected="false" aria-controls="panel-advanced" tabindex="-1">Advanced</button>
+          <button id="tab-appearance" type="button" role="tab" aria-selected="false" aria-controls="panel-appearance" tabindex="-1">Appearance</button>
+        </div>
+        <div class="settings-nav-footer">
+          <button id="setup" class="settings-nav-link" type="button" aria-label="Setup (opens in a new tab)" title="Open setup in a new tab"><span>Setup</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg></button>
         </div>
       </nav>
 
@@ -94,7 +109,11 @@
                   </div>
                   <div class="setting-row">
                     <div class="setting-label"><label for="api-key">API key</label><p class="description" id="key-help">For local clients. Your school token stays in the browser.</p></div>
-                    <div class="setting-control control-stack"><span data-slot="input-control"><input id="api-key" data-slot="input" class="mono" type="password" readonly autocomplete="off" spellcheck="false" placeholder="Available when connected" aria-describedby="key-help"></span><div class="button-row"><button id="show-key" data-slot="button" data-variant="outline" type="button" aria-pressed="false">Show</button><button id="copy-key" data-slot="button" data-variant="outline" type="button">Copy key</button></div></div>
+                    <div class="setting-control control-row">
+                      <span data-slot="input-control"><input id="api-key" data-slot="input" class="mono" type="password" readonly autocomplete="off" spellcheck="false" placeholder="Available when connected" aria-describedby="key-help"></span>
+                      <button id="show-key" data-slot="button" data-variant="outline" data-size="icon" type="button" aria-label="Show API key" title="Show API key" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/><path class="eye-slash" d="m3 3 18 18"/></svg></button>
+                      <button id="copy-key" data-slot="button" data-variant="outline" data-size="icon" type="button" aria-label="Copy API key" title="Copy API key"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V4H4v12h4"/></svg></button>
+                    </div>
                   </div>
                   <div class="setting-row">
                     <div class="setting-label"><label for="port">Local port</label><p class="description" id="port-help">Changes apply after restarting the bridge.</p></div>
@@ -104,7 +123,12 @@
                     <div class="setting-label"><h3>Replace API key</h3><p class="description">Update every client after replacement.</p></div>
                     <div class="setting-control"><button id="rotate-key" data-slot="button" data-variant="outline" type="button">Replace API key</button></div>
                   </div>
-                  <div id="rotate-confirm" data-slot="alert" data-variant="warning" class="inset-alert" hidden><h3>Replace your API key?</h3><p>The current key will stop working. Copy the new key into every connected client.</p><div class="button-row"><button id="cancel-rotate" data-slot="button" data-variant="outline" type="button">Cancel</button><button id="confirm-rotate" data-slot="button" type="button">Replace key</button></div></div>
+                  <div id="rotate-confirm" data-slot="alert" data-variant="warning" class="inset-alert" hidden>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m10.3 4-8 14a2 2 0 0 0 1.7 3h16a2 2 0 0 0 1.7-3l-8-14a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4m0 4h.01"/></svg>
+                    <h3 data-slot="alert-title">Replace your API key?</h3>
+                    <p data-slot="alert-description">The current key will stop working. Copy the new key into every connected client.</p>
+                    <div data-slot="alert-action" class="button-row"><button id="cancel-rotate" data-slot="button" data-variant="outline" type="button">Cancel</button><button id="confirm-rotate" data-slot="button" type="button">Replace key</button></div>
+                  </div>
                 </div>
               </div>
             </section>
@@ -133,10 +157,13 @@
             </section>
           </fieldset>
 
-          <section id="appearance" data-slot="frame" class="settings-frame" aria-labelledby="appearance-title">
-            <div data-slot="frame-panel"><div class="setting-row"><div class="setting-label"><h2 id="appearance-title" class="row-title">Appearance</h2><p class="description">Popup and settings. Saved immediately.</p></div><div class="setting-control"><label id="theme-label" for="theme" class="sr-only">Theme</label><span data-slot="select" class="select-control"><button id="theme" data-slot="select-trigger" type="button" value="system" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-labelledby="theme-label">System</button></span></div></div></div>
+          <section id="panel-appearance" role="tabpanel" aria-labelledby="tab-appearance" tabindex="0" hidden>
+            <div data-slot="frame" class="settings-frame">
+              <header data-slot="frame-panel-header"><h2 data-slot="frame-panel-title">Appearance</h2><p data-slot="frame-panel-description">Applies to the popup, settings, and setup. Saved immediately.</p></header>
+              <div data-slot="frame-panel"><div class="setting-row"><div class="setting-label"><label id="theme-label" for="theme">Theme</label></div><div class="setting-control"><span data-slot="select" class="select-control"><button id="theme" data-slot="select-trigger" type="button" value="system" role="combobox" aria-expanded="false" aria-haspopup="listbox" aria-labelledby="theme-label">System</button></span></div></div></div>
+            </div>
           </section>
-          <div class="save-bar"><p id="save-state" role="status" aria-live="polite">Connecting to the native app…</p><div class="button-row"><button id="reload" data-slot="button" data-variant="outline" type="button">Reload saved</button><button id="save" data-slot="button" type="submit" disabled>Save changes</button></div></div>
+          <div id="save-bar" class="save-bar"><p id="save-state" role="status" aria-live="polite">Connecting to the native app…</p><div class="button-row"><button id="reload" data-slot="button" data-variant="outline" type="button">Reload saved</button><button id="save" data-slot="button" type="submit" disabled>Save changes</button></div></div>
         </form>
         <footer><span>Keep XIPU AI signed in.</span><span>Extension ID <code id="extension-id"></code></span></footer>
       </div>
