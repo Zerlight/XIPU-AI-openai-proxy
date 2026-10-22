@@ -80,8 +80,9 @@ jobs:
         run: |
           set -euo pipefail
           version=$(jq -r .version extension/manifest.json)
-          if [[ "$RELEASE_TAG" != "v$version" ]]; then
-            echo "Release tag must match extension version v$version." >&2
+          if [[ "$RELEASE_TAG" != "v$version" ]] &&
+            ! { [[ "$RELEASE_TAG" == "v$version"-rc.* ]] && [[ "${RELEASE_TAG#"v$version-rc."}" =~ ^[1-9][0-9]*$ ]]; }; then
+            echo "Release tag must match v$version or v$version-rc.N (N is a positive integer)." >&2
             exit 1
           fi
           cd dist/release
@@ -100,6 +101,12 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
+          set -euo pipefail
+          release_flags=()
+          if [[ "$RELEASE_TAG" == *-rc.* ]]; then
+            release_flags+=(--prerelease --latest=false)
+          fi
           gh release create "$RELEASE_TAG" "$RUNNER_TEMP/release-downloads/"* \
+            "${release_flags[@]}" \
             --verify-tag --title "XIPU AI Bridge $RELEASE_TAG" --generate-notes \
             --notes "Download the archive for your operating system and CPU, extract it, and follow INSTALL.md. The browser extension is installed separately. Native binaries are not Developer ID signed, Apple notarized, or Windows Authenticode signed. See README for installation and platform validation limits."

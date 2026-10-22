@@ -10,6 +10,8 @@ function isolatedEnvironment(home) {
   fs.mkdirSync(home);
   const env = { ...process.env, HOME: home, USERPROFILE: home, APPDATA: path.join(home, 'AppData', 'Roaming'), XDG_CONFIG_HOME: path.join(home, '.config') };
   delete env.XIPU_BRIDGE_CONFIG_DIR;
+  delete env.CHROME_CONFIG_HOME;
+  delete env.CHROME_USER_DATA_DIR;
   return env;
 }
 function windowsLauncher(directory, env) {
@@ -98,6 +100,19 @@ try {
       const result = command(path.join(unpacked, executable), ['install', '--dry-run'], { env });
       assert.match(result.stdout, /Extension ID: eegmaembfjajhifjbddmdbppchinmmcg/);
       assert.ok(result.stdout.includes(home));
+      if (platform === 'linux') {
+        const browserEnv = { ...env, CHROME_CONFIG_HOME: path.join(home, 'Browser config'), CHROME_USER_DATA_DIR: path.join(home, 'Browser data') };
+        const nativeDir = path.join(home, 'Custom hosts');
+        for (const [args, directory] of [
+          [['--browser', 'chromium'], path.join(browserEnv.CHROME_USER_DATA_DIR, 'NativeMessagingHosts')],
+          [['--browser', 'brave'], path.join(env.XDG_CONFIG_HOME, 'BraveSoftware', 'Brave-Browser', 'NativeMessagingHosts')],
+          [['--browser', 'chromium', '--native-host-dir', nativeDir], nativeDir]
+        ]) {
+          const probe = command(path.join(unpacked, executable), ['install', '--dry-run', ...args], { env: browserEnv });
+          assert.ok(probe.stdout.includes(path.join(directory, 'edu.xjtlu.xipu_bridge.json')), probe.stdout);
+          assert.ok(probe.stdout.includes(path.join(env.XDG_CONFIG_HOME, 'XIPU AI Bridge', 'config.json')));
+        }
+      }
       if (platform === 'windows') windowsLauncher(unpacked, env);
       assert.deepEqual(fs.readdirSync(home), [], 'dry-run mutated the isolated home');
     }

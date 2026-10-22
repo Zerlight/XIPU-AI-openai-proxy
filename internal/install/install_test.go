@@ -190,6 +190,103 @@ func TestDryRunNeverMutates(t *testing.T) {
 	}
 }
 
+func TestLinuxBrowserPaths(t *testing.T) {
+	env := testEnvironment(t, "linux")
+	root := filepath.Dir(env.executable)
+	chromeConfig := filepath.Join(root, "browser config")
+	userData := filepath.Join(root, "browser data")
+	custom := filepath.Join(root, "custom hosts")
+	for _, test := range []struct {
+		name, browser, configHome, userDataDir, override, want string
+	}{
+		{"xdg", "chromium", "", "", "", filepath.Join(env.configBase, "chromium", "NativeMessagingHosts")},
+		{"chrome config", "chrome", chromeConfig, "", "", filepath.Join(chromeConfig, "google-chrome", "NativeMessagingHosts")},
+		{"chromium config", "chromium", chromeConfig, "", "", filepath.Join(chromeConfig, "chromium", "NativeMessagingHosts")},
+		{"user data precedence", "chromium", chromeConfig, userData, "", filepath.Join(userData, "NativeMessagingHosts")},
+		{"explicit precedence", "chromium", "relative-config", "relative-data", custom, custom},
+		{"brave xdg", "brave", chromeConfig, userData, "", filepath.Join(env.configBase, "BraveSoftware", "Brave-Browser", "NativeMessagingHosts")},
+		{"brave explicit", "brave", chromeConfig, userData, custom, custom},
+		{"edge unchanged", "edge", chromeConfig, userData, "", filepath.Join(env.configBase, "microsoft-edge", "NativeMessagingHosts")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			env.chromeConfigHome, env.chromeUserDataDir = test.configHome, test.userDataDir
+			o := installOptions(t, "--browser", test.browser, "--native-host-dir", test.override)
+			p, err := paths(o, env)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p.manifest != filepath.Join(test.want, hostName+".json") || p.dir != filepath.Join(env.configBase, "XIPU AI Bridge") {
+				t.Fatalf("incorrect browser or host directory: %+v", p)
+			}
+		})
+	}
+}
+
+func TestNativeHostDirectoryValidation(t *testing.T) {
+	for _, test := range []struct{ goos, browser, override, configHome, userData string }{
+		{"linux", "chromium", "relative", "", ""},
+		{"linux", "chromium", "/path\nwith-newline", "", ""},
+		{"linux", "chromium", "", "relative", ""},
+		{"linux", "chromium", "", "", "relative"},
+		{"windows", "chrome", "/custom", "", ""},
+		{"darwin", "brave", "", "", ""},
+		{"windows", "brave", "", "", ""},
+	} {
+		env := testEnvironment(t, test.goos)
+		env.chromeConfigHome, env.chromeUserDataDir = test.configHome, test.userData
+		o := installOptions(t, "--browser", test.browser, "--native-host-dir", test.override)
+		if err := execute(o, env); err == nil {
+			t.Fatalf("accepted unsupported path: %+v", test)
+		}
+		if _, err := os.Stat(env.configBase); !errors.Is(err, os.ErrNotExist) {
+			t.Fatal("invalid path mutated configuration")
+		}
+	}
+}
+
+func TestCustomNativeHostDirectoryLifecycle(t *testing.T) {
+	for _, goos := range []string{"linux", "darwin"} {
+		t.Run(goos, func(t *testing.T) {
+			env := testEnvironment(t, goos)
+			dir := filepath.Join(filepath.Dir(env.executable), "Browser data", "NativeMessagingHosts")
+			o := installOptions(t, "--browser", "chromium", "--native-host-dir", dir, "--dry-run")
+			if err := execute(o, env); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("dry-run created manifest directory")
+			}
+			o.dryRun = false
+			if err := execute(o, env); err != nil {
+				t.Fatal(err)
+			}
+			p, _ := paths(o, env)
+			if _, err := os.Stat(filepath.Join(dir, hostName+".json")); err != nil {
+				t.Fatal(err)
+			}
+			u, err := parse([]string{"uninstall", "--browser", "chromium", "--native-host-dir", dir})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := execute(u, env); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(p.manifest); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("custom manifest was not removed")
+			}
+			if _, err := os.Stat(p.config); err != nil {
+				t.Fatal("shared configuration was removed")
+			}
+			if err := os.Symlink(env.executable, p.manifest); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			if execute(o, env) == nil || execute(u, env) == nil {
+				t.Fatal("modified a managed manifest symlink")
+			}
+		})
+	}
+}
+
 func TestInstallUpdateAndUninstallPreserveKey(t *testing.T) {
 	env := testEnvironment(t, "linux")
 	o := installOptions(t, "--session-name", "Bridge custom", "--port", "8766")

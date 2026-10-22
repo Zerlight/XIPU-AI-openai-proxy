@@ -38,6 +38,13 @@ is active.
 The native binaries are unsigned, so your operating system may warn or block
 execution. Follow its normal security controls.
 
+For Linux Chromium or Brave, select the browser explicitly:
+`bash install.sh --browser chromium` or `bash install.sh --browser brave`.
+Use `--dry-run` to inspect registration paths without changing files. Custom
+Linux/macOS configurations can use `--native-host-dir /absolute/directory` to
+select the browser's NativeMessagingHosts directory. Use the same option for
+upgrades and uninstalling.
+
 For other browsers, upgrades, configuration, and troubleshooting, see the
 [reference guide](https://github.com/Zerlight/XIPU-AI-openai-proxy/blob/main/docs/reference.md).
 

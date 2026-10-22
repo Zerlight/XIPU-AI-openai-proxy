@@ -20,6 +20,27 @@ Close browsers before upgrading the native app. The installer copies the executa
 
 For Edge or Chromium, open a terminal in the extracted native package and run `./xipu-bridge install --browser edge` or `--browser chromium` (`.\xipu-bridge.exe` on Windows). Launchers also forward these arguments. `--dry-run` describes installation without writing files or registry entries. Custom extension builds may pass `--extension-id YOUR_EXTENSION_ID`.
 
+### Linux browser paths
+
+Select the browser when installing; the default is Chrome:
+
+```sh
+./xipu-bridge install --browser chromium
+./xipu-bridge install --browser brave
+```
+
+Run only the command for the browser you use. Linux Brave stable uses `$XDG_CONFIG_HOME/BraveSoftware/Brave-Browser/NativeMessagingHosts`, or `~/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts` when XDG_CONFIG_HOME is unset. Chrome and Chromium also honor `CHROME_CONFIG_HOME` and `CHROME_USER_DATA_DIR`; the latter takes precedence. Brave uses its default XDG directory for native hosts independently of those Chrome variables. The bridge's own settings remain under the OS user configuration directory.
+
+For a custom browser wrapper, release channel, or relocated Chromium data directory, Linux and macOS support an explicit absolute manifest directory:
+
+```sh
+./xipu-bridge install --browser chromium --native-host-dir /absolute/browser-data/NativeMessagingHosts --dry-run
+```
+
+Check the printed path, then repeat without `--dry-run`. Use the same browser and directory arguments when upgrading or uninstalling. This option overrides browser environment variables and only changes registration placement. For Chrome/Chromium, `chrome://version` shows the Profile Path: use its parent directory, then append `NativeMessagingHosts`; do not place the manifest inside `Default` or `Profile 1`. Match the browser's actual environment when launching the installer. [Chromium documents these directory rules](https://chromium.googlesource.com/chromium/src/+/HEAD/docs/user_data_dir.md).
+
+On NixOS, use the packaged browser launcher and install as the same user who runs the browser. Home Manager may own host manifests as symlinks; the installer refuses to overwrite managed symlinks. Update the owning declaration instead. Sandboxed browser distributions can require separate native-host integration; changing the manifest directory alone does not grant access through a sandbox. The bridge communicates through Native Messaging stdin/stdout and a loopback TCP API, so it has no desktop socket path to configure.
+
 Native packages currently lack Developer ID signing, Apple notarization, and Windows Authenticode signing, so operating-system security checks may prevent a downloaded executable from running. A signed Git commit is separate from executable signing. Smooth macOS distribution requires the [Developer ID and notarization workflow](https://developer.apple.com/developer-id/); the installation launchers do not change OS security settings.
 
 The installer refuses to overwrite a registration belonging to a different executable. Remove a conflicting registration through its own installation procedure before installing this host.
@@ -188,13 +209,13 @@ For a synthetic UI preview, run `node tests/popup-preview.cjs` or `node tests/op
 
 ## Publishing releases
 
-The GitHub workflow tests macOS, Linux, and Windows and checks the release packages. Pushing a `v<version>` tag publishes the six native installation archives, the extension ZIP, and a checksum file to GitHub Releases only after those jobs succeed. The tag must exactly match `extension/manifest.json` (for example, `v0.1.0`); ordinary branch pushes only produce CI artifacts. The release checksum file covers the downloadable assets, while the local build checksum file also covers raw binaries and license files.
+The GitHub workflow tests macOS, Linux, and Windows and checks the release packages. Pushing a `v<version>` tag publishes the six native installation archives, the extension ZIP, and a checksum file to GitHub Releases only after those jobs succeed. Stable tags must match `extension/manifest.json` (for example, `v0.4.1`). Tags ending in `-rc.N`, where N is a positive integer, publish a prerelease without replacing the latest stable release (for example, `v0.4.1-rc.1`). Ordinary branch pushes only produce CI artifacts. The release checksum file covers the downloadable assets, while the local build checksum file also covers raw binaries and license files.
 
 Release creation uses the workflow's repository token, with write access limited to the publishing job. Native executables are not signed by this workflow.
 
 ## Platforms and release limits
 
-User-level registration supports Chrome, Edge, and Chromium on macOS, Linux, and Windows. Cross-compilation is not runtime validation; Windows/Linux browsers and macOS x86-64 still require hardware acceptance testing. Snap and Flatpak browser packages may need separate host integration. Firefox, mobile browsers, and ChromeOS are outside this version's scope.
+User-level registration supports Chrome, Edge, and Chromium on macOS, Linux, and Windows, plus Brave stable on Linux. Cross-compilation is not runtime validation; Windows/Linux browsers and macOS x86-64 still require hardware acceptance testing. Snap and Flatpak browser packages may need separate host integration. Firefox, mobile browsers, and ChromeOS are outside this version's scope.
 
 Use one active browser/profile for the host. Concurrent hosts compete for the configured port; the second host reports a bind error. Keep the selected school tab signed in. The installation archives contain unsigned native binaries; packaging does not establish operating-system trust.
 
@@ -208,7 +229,7 @@ Run this from the extracted native package; use `.\xipu-bridge.exe` on Windows, 
 
 | Symptom | Check |
 | --- | --- |
-| Native host not found | Register for this browser and the extension's current ID |
+| Native host not found | Register for this browser and the extension's current ID; compare the printed manifest path with the browser's configuration directory |
 | Host exits immediately | Check for a port conflict, invalid config, or an OS execution restriction |
 | No connected tab | Refresh the signed-in school tab after reloading the extension |
 | Model switch or session validation fails | Check the requested model, unique conversation name, and Context Count 0; inspect the saved school model after a failed update |
@@ -217,3 +238,11 @@ Run this from the extracted native package; use `.\xipu-bridge.exe` on Windows, 
 | Settings save or discovery fails | Read the error, reconnect if necessary, then explicitly reload or retry |
 
 Keep credentials and personal transcripts out of issue reports.
+
+For Linux native-host launch failures, fully quit the browser, start its usual packaged launcher with logging, then reconnect the extension:
+
+```sh
+chromium --enable-logging=stderr --log-level=1 2>&1 | grep -E 'native_messag|launch_context|xipu-bridge'
+```
+
+Replace `chromium` with the installed browser's launcher. An already running browser can receive the new invocation without adopting its logging flags. Record the extension popup error and the relevant native-host log lines. Browser zygote startup errors alone do not identify a Native Messaging failure. See [Chrome's Native Messaging troubleshooting](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging#debug-native-messaging).

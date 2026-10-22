@@ -23,7 +23,7 @@ devenv shell -- bash packaging/check.sh
 | Images | PNG/JPEG/GIF/WebP validation, size limits, safe public HTTPS retrieval, multipart upload, typed capability errors before generation, opt-in answered-history omission, and current-image protection |
 | Tools and structured output | Function-call round trips, call-ID matching, argument validation, JSON Schema output, bounded schema processing, and blocked external resources |
 | Settings and UI | Validated drafts, persistence failures, busy/offline states, key rotation, theme changes, clipboard errors, select keyboard behavior, and focus handling |
-| Installation and packaging | OS/browser registration layouts, configuration preservation, argument quoting, launcher exit status, archive contents, permissions, checksums, and extension identity |
+| Installation and packaging | OS/browser registration layouts, Linux Brave paths, Chromium environment precedence, custom manifest directories, symlink protection, configuration preservation, argument quoting, launcher exit status, archive contents, permissions, checksums, and extension identity |
 
 Fixtures use synthetic credentials, sessions, model names, and responses. The automated suite does not require a school login or make live generation requests.
 

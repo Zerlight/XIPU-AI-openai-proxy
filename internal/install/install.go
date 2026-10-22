@@ -33,14 +33,16 @@ type hostManifest struct {
 
 type options struct {
 	action, browser, id, session string
+	nativeHostDir                string
 	port                         int
 	dryRun, sessionSet, portSet  bool
 }
 
 type environment struct {
-	goos, home, configBase, executable string
-	output                             io.Writer
-	registry                           func(...string) ([]byte, error)
+	goos, home, configBase, executable  string
+	chromeConfigHome, chromeUserDataDir string
+	output                              io.Writer
+	registry                            func(...string) ([]byte, error)
 }
 
 type layout struct {
@@ -74,14 +76,18 @@ func Run(args []string) error {
 	if err != nil {
 		return err
 	}
-	return execute(opts, environment{runtime.GOOS, home, base, executable, os.Stdout,
-		func(args ...string) ([]byte, error) { return exec.Command("reg.exe", args...).CombinedOutput() }})
+	return execute(opts, environment{
+		goos: runtime.GOOS, home: home, configBase: base, executable: executable, output: os.Stdout,
+		chromeConfigHome: os.Getenv("CHROME_CONFIG_HOME"), chromeUserDataDir: os.Getenv("CHROME_USER_DATA_DIR"),
+		registry: func(args ...string) ([]byte, error) { return exec.Command("reg.exe", args...).CombinedOutput() },
+	})
 }
 
 const usage = `Usage:
-  xipu-bridge install [--extension-id ID] [--browser chrome|edge|chromium]
-      [--session-name NAME] [--port 8765] [--dry-run]
-  xipu-bridge uninstall [--browser chrome|edge|chromium] [--dry-run]
+  xipu-bridge install [--extension-id ID] [--browser chrome|edge|chromium|brave]
+      [--native-host-dir DIRECTORY] [--session-name NAME] [--port 8765] [--dry-run]
+  xipu-bridge uninstall [--browser chrome|edge|chromium|brave]
+      [--native-host-dir DIRECTORY] [--dry-run]
 
 Install copies this executable and registers a per-user Native Messaging host.
 The default extension ID is ` + officialExtensionID + `.
@@ -90,6 +96,9 @@ Existing settings and API key are preserved unless explicitly changed.
 The default session is "XIPU AI Bridge".
 Uninstall removes the selected browser registration; shared files are preserved.
 Dry-run does not write files or invoke registry commands.
+Brave registration is supported on Linux.
+On Linux and macOS, --native-host-dir selects an absolute manifest directory.
+Use the same directory when upgrading or uninstalling. It does not move host settings.
 `
 
 func parse(args []string) (options, error) {
@@ -100,7 +109,8 @@ func parse(args []string) (options, error) {
 	o.action = args[0]
 	fs := flag.NewFlagSet(o.action, flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
-	fs.StringVar(&o.browser, "browser", "chrome", "chrome, edge, or chromium")
+	fs.StringVar(&o.browser, "browser", "chrome", "chrome, edge, chromium, or brave (Linux)")
+	fs.StringVar(&o.nativeHostDir, "native-host-dir", "", "absolute NativeMessagingHosts directory (Linux/macOS)")
 	fs.BoolVar(&o.dryRun, "dry-run", false, "describe changes without writing files or registry entries")
 	if o.action == "install" {
 		defaults := config.Defaults()
@@ -118,8 +128,8 @@ func parse(args []string) (options, error) {
 		o.sessionSet = o.sessionSet || f.Name == "session-name"
 		o.portSet = o.portSet || f.Name == "port"
 	})
-	if o.browser != "chrome" && o.browser != "edge" && o.browser != "chromium" {
-		return o, errors.New("--browser must be chrome, edge, or chromium")
+	if o.browser != "chrome" && o.browser != "edge" && o.browser != "chromium" && o.browser != "brave" {
+		return o, errors.New("--browser must be chrome, edge, chromium, or brave")
 	}
 	if o.action == "install" {
 		if !extensionID.MatchString(o.id) {
@@ -141,6 +151,9 @@ func paths(o options, env environment) (layout, error) {
 	if !filepath.IsAbs(env.configBase) || !filepath.IsAbs(env.home) {
 		return p, errors.New("user home and configuration paths must be absolute")
 	}
+	if o.browser == "brave" && env.goos != "linux" {
+		return p, errors.New("--browser brave is currently supported only on Linux")
+	}
 	p.binary = filepath.Join(p.dir, "xipu-bridge")
 	p.config = filepath.Join(p.dir, "config.json")
 	var manifestDir string
@@ -149,8 +162,16 @@ func paths(o options, env environment) (layout, error) {
 		name := map[string]string{"chrome": "Google/Chrome", "edge": "Microsoft Edge", "chromium": "Chromium"}[o.browser]
 		manifestDir = filepath.Join(env.home, "Library", "Application Support", filepath.FromSlash(name), "NativeMessagingHosts")
 	case "linux":
-		name := map[string]string{"chrome": "google-chrome", "edge": "microsoft-edge", "chromium": "chromium"}[o.browser]
-		manifestDir = filepath.Join(env.configBase, name, "NativeMessagingHosts")
+		name := map[string]string{"chrome": "google-chrome", "edge": "microsoft-edge", "chromium": "chromium", "brave": "BraveSoftware/Brave-Browser"}[o.browser]
+		base := env.configBase
+		chromiumPaths := o.browser == "chrome" || o.browser == "chromium"
+		if chromiumPaths && env.chromeConfigHome != "" {
+			base = env.chromeConfigHome
+		}
+		manifestDir = filepath.Join(base, filepath.FromSlash(name), "NativeMessagingHosts")
+		if chromiumPaths && env.chromeUserDataDir != "" {
+			manifestDir = filepath.Join(env.chromeUserDataDir, "NativeMessagingHosts")
+		}
 	case "windows":
 		p.binary += ".exe"
 		manifestDir = filepath.Join(p.dir, "manifests", o.browser)
@@ -158,6 +179,15 @@ func paths(o options, env environment) (layout, error) {
 		p.registry = `HKCU\Software\` + name + `\NativeMessagingHosts\` + hostName
 	default:
 		return p, fmt.Errorf("unsupported operating system: %s", env.goos)
+	}
+	if o.nativeHostDir != "" {
+		if env.goos == "windows" {
+			return p, errors.New("--native-host-dir is supported only on Linux and macOS")
+		}
+		manifestDir = o.nativeHostDir
+	}
+	if !filepath.IsAbs(manifestDir) || strings.ContainsAny(manifestDir, "\x00\r\n") {
+		return p, errors.New("native host directory must be an absolute path without NUL or line breaks")
 	}
 	p.manifest = filepath.Join(manifestDir, hostName+".json")
 	return p, nil
@@ -232,7 +262,7 @@ func execute(o options, env environment) error {
 			return fmt.Errorf("register native host: %w", err)
 		}
 	}
-	fmt.Fprintf(env.output, "Installed %s\nRegistered %s for %s\nOpen the extension popup and connect. Keep a school chat tab signed in.\n", p.binary, hostName, o.browser)
+	fmt.Fprintf(env.output, "Installed %s\nRegistered %s for %s\nManifest: %s\nOpen the extension popup and connect. Keep a school chat tab signed in.\n", p.binary, hostName, o.browser, p.manifest)
 	return nil
 }
 

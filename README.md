@@ -75,6 +75,8 @@ Keep the XIPU AI tab signed in. **Choose models in your client; the bridge updat
 > [!NOTE]
 > Native packages are not code-signed or notarized; your operating system may block them. Browser integration requires platform-specific verification. See [installation options](docs/reference.md#installation-options) for Edge/Chromium and [troubleshooting](docs/reference.md#uninstall-and-troubleshooting) if setup fails.
 
+Linux Chromium and Brave users: run `bash install.sh --browser chromium` or `bash install.sh --browser brave`. See [Linux browser paths](docs/reference.md#linux-browser-paths) for custom configuration directories and NixOS.
+
 ## Connect your client
 
 | Client setting | Value |
