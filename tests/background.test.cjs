@@ -36,11 +36,25 @@ function chunks(job, bytes = Buffer.from(JSON.stringify({ type: 'req', job, op: 
   let native = natives[0];
   ready(native);
   assert.equal(stored.bridgeStatus, 'no-tab');
-  for (const sender of [{ id, frameId: 0, url: 'https://evil.test' }, { id, frameId: 1, url: origin }, { id: 'wrong', frameId: 0, url: origin }]) {
+  native.onMessage.emit({ type: 'req', job: 'no-tab', op: 'chat', payload: {} });
+  assert.equal(native.sent.at(-1).evt.code, 'tab_unavailable');
+  assert.equal(native.sent.at(-1).evt.stage, 'connection');
+  for (const sender of [{ id, frameId: 0, url: 'https://evil.test/chat' }, { id, frameId: 1, url: origin + '/chat' }, { id: 'wrong', frameId: 0, url: origin + '/chat' },
+    ...['/', '/login', '/user/points', '/chat/settings', '/v3/chat/history', '/chatty', '/Chat'].map(path => ({ id, frameId: 0, url: origin + path }))]) {
     const p = port(sender); chrome.runtime.onConnect.emit(p); assert.equal(p.disconnected, true);
   }
+  for (const schoolOrigin of [origin, 'https://xipuai.xjtlu.edu.cn']) {
+    for (const path of ['/chat', '/chat/?intent=chat#composer', '/v3/chat', '/v3/chat/?new_chat=0#composer']) {
+      const p = port({ id, frameId: 0, url: schoolOrigin + path });
+      chrome.runtime.onConnect.emit(p);
+      assert.equal(p.disconnected, undefined);
+      assert.equal(native.sent.at(-1).tabs, 1);
+      p.disconnect();
+    }
+  }
+  assert.equal(stored.bridgeStatus, 'no-tab');
   const a = port({ id, frameId: 0, url: origin + '/v3/chat' });
-  const b = port({ id, frameId: 0, url: origin + '/v3/chat' });
+  const b = port({ id, frameId: 0, url: origin + '/chat' });
   chrome.runtime.onConnect.emit(a); chrome.runtime.onConnect.emit(b);
   assert.equal(native.sent.at(-1).tabs, 2);
   assert.equal(stored.bridgeStatus, 'ready');
@@ -84,6 +98,8 @@ function chunks(job, bytes = Buffer.from(JSON.stringify({ type: 'req', job, op: 
   assert.equal(stored.bridgeStatus, 'busy');
   native.onMessage.emit({ type: 'req', job: 'conflict', op: 'chat', payload: {} });
   assert.match(native.sent.at(-1).evt.message, /busy/);
+  assert.equal(native.sent.at(-1).evt.code, 'bridge_busy');
+  assert.equal(native.sent.at(-1).evt.stage, 'connection');
   const inspection = { models: [{ id: 'model-a', name: 'Model A' }], sessions: [] };
   count = native.sent.length;
   b.onMessage.emit({ type: 'evt', evt: { job: request.job, kind: 'result', result: inspection } });
@@ -131,6 +147,8 @@ function chunks(job, bytes = Buffer.from(JSON.stringify({ type: 'req', job, op: 
   for (const group of invalidChunkGroups) {
     for (const message of group) native.onMessage.emit(message);
     assert.match(native.sent.at(-1).evt.message, /Invalid or incomplete/);
+    assert.equal(native.sent.at(-1).evt.code, 'native_request_invalid');
+    assert.equal(native.sent.at(-1).evt.stage, 'connection');
     assert.equal(stored.bridgeStatus, 'ready');
     assert.equal(b.sent.length, count, 'malformed chunks never reach a page');
     assert.equal(timers.size, 0, 'malformed assembly must release its timer');
@@ -148,6 +166,8 @@ function chunks(job, bytes = Buffer.from(JSON.stringify({ type: 'req', job, op: 
   [...timers.values()][0]();
   assert.equal(stored.bridgeStatus, 'ready');
   assert.match(native.sent.at(-1).evt.message, /assembly timed out/);
+  assert.equal(native.sent.at(-1).evt.code, 'native_request_timeout');
+  assert.equal(native.sent.at(-1).evt.stage, 'connection');
   assert.equal(b.sent.length, count);
   assert.equal(timers.size, 0);
   native.onMessage.emit(chunks('missing-chunk')[1]);
@@ -158,6 +178,8 @@ function chunks(job, bytes = Buffer.from(JSON.stringify({ type: 'req', job, op: 
   chrome.runtime.onConnect.emit(temporaryPage);
   native.onMessage.emit(chunks('closed-page')[0]);
   temporaryPage.disconnect();
+  assert.equal(native.sent.at(-2).evt.code, 'school_tab_disconnected');
+  assert.equal(native.sent.at(-2).evt.stage, 'connection');
   assert.equal(stored.bridgeStatus, 'ready');
   assert.equal(timers.size, 0);
   assert.equal(temporaryPage.sent.length, 0, 'disconnect while assembling sends no partial request');
@@ -165,6 +187,7 @@ function chunks(job, bytes = Buffer.from(JSON.stringify({ type: 'req', job, op: 
   native.onMessage.emit({ type: 'req', job: 'two', op: 'chat', payload: {} });
   b.disconnect();
   assert.match(native.sent.at(-2).evt.message, /request was not retried/);
+  assert.equal(native.sent.at(-2).evt.code, 'school_tab_disconnected');
   native.onMessage.emit({ type: 'req', job: 'three', op: 'chat', payload: {} });
   native.onMessage.emit({ type: 'cancel', job: 'three' });
   assert.equal(a.sent.at(-1).type, 'cancel');

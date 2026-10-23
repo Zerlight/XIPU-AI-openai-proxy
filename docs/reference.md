@@ -77,7 +77,7 @@ Appearance is stored in extension storage. Host settings and the local key live 
 
 **Advanced → Debugging** offers two independent options, both off by default. Save changes to apply them; Reset defaults switches them off in the form.
 
-**Capture requests locally** (`debug_capture_requests`) stores the complete API request body, including prompts and image data, the derived school payload, and diagnostic events in `debug/latest.json` under the host configuration directory. This private local file is outside the repository and replaces the previous capture. Authentication headers are excluded. Diagnostic event capture is bounded and marks truncation explicitly. Treat the file as sensitive; turning capture off stops new captures but does not remove the saved file.
+**Capture requests locally** (`debug_capture_requests`) stores the complete API request body, including prompts and attachment data, the derived school payload, and diagnostic events in `debug/latest.json` under the host configuration directory. This private local file is outside the repository and replaces the previous capture. Authentication headers are excluded. Diagnostic event capture is bounded and marks truncation explicitly. Treat the file as sensitive; turning capture off stops new captures but does not remove the saved file.
 
 **Use webpage send flow** (`debug_web_session`) uses the legacy `/v3/chat` page's official Send flow so the dedicated conversation shows the response live. Before sending an API request:
 
@@ -91,7 +91,7 @@ Page controls are temporarily locked during the request; cancellation remains av
 
 ### First-run setup
 
-The first toolbar opening shows a welcome screen. Choose **Start setup** to open the guide in a new tab; it can also be reopened through **Setup** in the dashboard or Settings. It checks the native connection and signed-in tab, loads available models, and lets you create a dedicated conversation with a unique name. Creation is an explicit action; opening the extension does not create a conversation or generate a response.
+The first time you open the extension from the toolbar, it shows a welcome screen. Choose **Start setup** to open the guide in a new tab; you can reopen it through **Setup** in the dashboard or Settings. **Open XIPU AI** opens the recommended `/chat` frontend, which supports documents and multiple attachments. The guide checks the native connection and signed-in tab, loads available models, and lets you create a dedicated conversation with a unique name. Creation is an explicit action; opening the extension does not create a conversation or generate a response.
 
 For a previously configured connection, **Use existing setup** skips the guide and opens the dashboard. This choice does not verify or change the school conversation. Existing conversations can be selected through Settings.
 
@@ -119,7 +119,7 @@ Only the explicit Setup action creates a school conversation. Ordinary API reque
 | --- | --- |
 | `GET /health` | Minimal unauthenticated process/tab status |
 | `GET /v1/models` | Authenticated school model catalog |
-| `POST /v1/chat/completions` | Text, images, function calls, and structured output; streaming or JSON |
+| `POST /v1/chat/completions` | Text, images, files, function calls, and structured output; streaming or JSON |
 | `POST /v1/responses` | Stateless Responses-compatible input/output and typed SSE events |
 
 Use `Authorization: Bearer <LOCAL_API_KEY>` for API calls. This key is independent of the school token.
@@ -141,9 +141,108 @@ Images in conversation history count as image input, even when the latest messag
 
 That setting (`omit_historical_images`, off by default) applies to every model. It replaces earlier image attachments with an explicit image-unavailable marker while retaining existing text and assistant descriptions. An image is eligible only when an assistant reply follows it and a later user turn follows that reply. Current images, consecutive unanswered user inputs, and images in an ongoing tool exchange stay intact. Omitted attachments are not downloaded, decoded, or uploaded, and no captions are generated. The model can use the retained text but cannot inspect omitted visual details. Turn the setting off to preserve all images again.
 
-The bridge accepts PNG, JPEG, static GIF, and WebP: at most four retained images, 10 MiB per image, 16 MiB of decoded image bytes per request, 16,384 pixels per side, and 40 megapixels per image. HTTP requests and serialized native jobs are limited to 24 MiB, including base64 overhead and text; the HTTP limit still includes omitted image data supplied by the client. The school's own limits may be lower. Images remain ordered and are referenced in the text transcript. Omit `detail` or use `auto`; resolution selection and OpenAI-hosted file IDs are not supported.
+The bridge accepts PNG, JPEG, static GIF, and WebP. Attachment counts follow the school chat frontend: `/chat` accepts up to **10 retained attachments** in total, including images and documents, while legacy `/v3/chat` accepts **one image**. Exceeding the selected frontend's limit returns HTTP 400 before any school request; attachments are never silently dropped.
+
+Size limits are 10 MiB per image, 16 MiB of decoded attachment bytes per request, 16,384 pixels per side, and 40 megapixels per image. HTTP requests and serialized native jobs are limited to 24 MiB, including base64 overhead and text; the HTTP limit includes any omitted image data supplied by the client. These are bridge safety limits, not a guarantee of school capacity. Images remain ordered and are referenced in the text transcript. Omit `detail` or use `auto`; resolution selection and OpenAI-hosted file IDs are not supported.
 
 Uploaded images are sent to school storage and are not automatically deleted, including after cancellation or failure. Uploads are never automatically retried.
+
+### Files
+
+To send files, keep a `/chat` tab signed in and turn off **Use webpage send flow**. On `/v3/chat` or in webpage send mode, document requests return HTTP **400** with `error.code: unsupported_file_frontend` before any school request.
+
+Responses accepts `input_file` parts with `filename` and `file_data`. Supply raw base64 or a base64 data URL whose MIME type matches the filename extension:
+
+```json
+{
+  "model": "YOUR_MODEL_ID",
+  "store": false,
+  "input": [{
+    "role": "user",
+    "content": [
+      {"type": "input_text", "text": "Summarize the attached report."},
+      {"type": "input_file", "filename": "report.pdf", "file_data": "data:application/pdf;base64,..."}
+    ]
+  }]
+}
+```
+
+For Chat Completions, use `{"type":"file","file":{"filename":"report.pdf","file_data":"..."}}` inside message content. These shapes follow the [OpenAI file-input formats](https://developers.openai.com/api/docs/guides/file-inputs). The bridge accepts PDF, UTF-8 TXT, Markdown, and CSV on both endpoints; text formats in Chat Completions are a bridge extension to OpenAI's documented PDF support.
+
+Responses also accepts `file_url` instead of `file_data` for public HTTPS files. Downloads use the same private-network, credential, redirect, and size protections as remote images. Supply a filename when the URL path does not end in a supported extension. Filenames must be safe ASCII basenames of at most 128 characters. Local file paths, hosted `file_id` references, and a persistent Files API are unsupported.
+
+Images and documents share a limit of **10 retained attachments** on `/chat`, matching its ordinary chat upload limit, with **10 MiB per attachment** and **16 MiB of decoded data in total**. The 24 MiB HTTP/native-job limit also applies, including base64 overhead. Files are validated before upload and uploaded sequentially in transcript order. If an upload fails, generation does not start and the upload is not retried; successfully uploaded files are not automatically deleted. Documents retained in conversation history count toward these limits; Text-only image history applies only to images.
+
+Document input does not require the chat model's image capability flag. Requests that include image parts still do. The school service controls document parsing and model selection and may attribute a response to `Document-Parsing` even when a chat model was requested. PDF upload support does not guarantee OCR, recognition of embedded figures, or successful parsing of every PDF. Uploads go to school storage and remain subject to its retention and usage rules.
+
+### Attachment upload errors
+
+Both endpoints return HTTP **502** with `error.code: attachment_upload_failed` when a school upload fails. `error.param` identifies the failed content part in the original request, so clients can locate it without parsing the message:
+
+```json
+{
+  "error": {
+    "message": "Attachment 2/3 (report.pdf): The school upload failed.",
+    "type": "bridge_error",
+    "code": "attachment_upload_failed",
+    "param": "input[0].content[2]",
+    "attachment": {
+      "index": 1,
+      "total": 3,
+      "filename": "report.pdf",
+      "kind": "file"
+    }
+  }
+}
+```
+
+Paths use `messages[i].content[j]` for Chat Completions, `input[i].content[j]` for Responses messages, or `input[i].output[j]` for Responses function outputs. They retain their original indices after internal message conversion or omission of earlier images. Duplicate filenames are distinguished by the path.
+
+`attachment` is a bridge extension: `index` is the zero-based upload position among retained images and documents, `total` is their combined count, `filename` is the upload basename (generated for images), and `kind` is `image` or `file`. The human-readable message uses a one-based position and the verified upload basename. These fields contain no file data or source URLs. When an older extension cannot identify the failed attachment, the API returns a generic upstream error without attachment metadata.
+
+Upload failures occur before response streaming starts, so `stream:true` requests also receive this JSON error. Clients must read these fields to highlight the failed attachment; the metadata alone does not change their interfaces. After the first failure, no further attachments are uploaded and generation does not start. Uploads are not automatically retried.
+
+### Error details
+
+Use `error.code` for classification and `error.param`, when present, to locate an invalid request field. `error.message` is a human-readable explanation. Local validation identifies specific fields, including individual attachment content parts, where possible. For malformed input, it may identify only the enclosing field.
+
+`error.stage` and `error.upstream` are bridge extensions. The stage identifies where the failure occurred: local validation, connection handling, authentication, model discovery, session operations, attachment upload, generation, or stream processing. Upstream metadata includes the observed `http_status` and numeric `school_code` when available:
+
+```json
+{
+  "error": {
+    "message": "Generate response: The school service is temporarily unavailable (HTTP 503). Try again later; no automatic retry was made.",
+    "type": "bridge_error",
+    "code": "school_http_error",
+    "stage": "generation",
+    "upstream": { "http_status": 503 }
+  }
+}
+```
+
+| Failure | API status | Error code |
+| --- | --- | --- |
+| Invalid or unsupported request field | 400 | `invalid_request`, `unsupported_parameter` |
+| Invalid local API key | 401 | `invalid_api_key` |
+| Missing, ambiguous, or unsafe dedicated session | 400 | `school_session_not_found`, `school_session_ambiguous`, `school_session_unsafe` |
+| Model absent from the school catalog | 400 | `school_model_unavailable` |
+| Missing school sign-in or upstream HTTP 401 | 502 | `school_auth_required` |
+| Upstream HTTP 429 outside an attachment upload | 429 | `school_rate_limited` |
+| Other unsuccessful school HTTP response | 502 | `school_http_error` |
+| School business-code rejection | 502 | `school_rejected` |
+| Invalid school JSON or response structure | 502 | `school_invalid_response` |
+| School fetch failure | 502 | `school_network_error` |
+| Session update fails verification | 502 | `school_session_update_failed` |
+| Incomplete SSE frame or stream failure | 502 before streaming | `school_stream_incomplete`, `school_stream_error` |
+| Empty result or invalid structured output | 502 | `missing_result`, `invalid_generation` |
+| Native connection lost or invalid transport chunks | 502 | `native_disconnected`, `native_request_invalid` |
+| Native request assembly timeout | 504 | `native_request_timeout` |
+| Overall or idle timeout | 504 | `bridge_timeout`, `bridge_idle_timeout` |
+| No school tab, disconnected tab, or another active request | 503 | `tab_unavailable`, `school_tab_disconnected`, `bridge_busy` |
+
+Attachment upload failures retain `attachment_upload_failed` and their attachment location, with upstream metadata for the underlying failure. HTTP 403 is reported as a school HTTP error, not assumed to be an expired login. Numeric business codes do not establish content filtering, exhausted credits, or another undocumented cause. Unknown errors remain `upstream_error`; unavailable metadata is omitted.
+
+Failures before streaming return a JSON error. Once SSE has started, the HTTP status is already committed: Chat Completions emits an `error` event and Responses emits `response.failed`, carrying the same available diagnostic fields. Clients must inspect these events instead of treating HTTP 200 alone as success. These fields do not enable automatic retries, and client interfaces must support them to display more specific guidance.
 
 ### Function calls and structured output
 
@@ -157,7 +256,7 @@ Ordinary text streams immediately. Tool and structured-output responses are buff
 
 ### Responses compatibility
 
-`POST /v1/responses` accepts text or message `input`, `instructions`, images, function definitions, and function call/result items. Use `store:false`; the client supplies conversation history. Responses SSE uses typed events with stable item IDs and sequence numbers, including completion and failure events.
+`POST /v1/responses` accepts text or message `input`, `instructions`, images, files, function definitions, and function call/result items. Use `store:false`; the client supplies conversation history. Responses SSE uses typed events with stable item IDs and sequence numbers, including completion and failure events.
 
 Response storage, `previous_response_id`, background jobs, response retrieval/deletion, WebSockets, hosted tools, and provider-specific encrypted reasoning state are unsupported. Raw school reasoning is available as Chat Completions `reasoning_content`; Responses do not include a reasoning summary. Request-specific temperature is rejected because the school conversation owns that setting. Unsupported request fields return an error. The response `model` identifies the requested route, not independently verified model provenance.
 
@@ -212,6 +311,18 @@ For a synthetic UI preview, run `node tests/popup-preview.cjs` or `node tests/op
 The GitHub workflow tests macOS, Linux, and Windows and checks the release packages. Pushing a `v<version>` tag publishes the six native installation archives, the extension ZIP, and a checksum file to GitHub Releases only after those jobs succeed. Stable tags must match `extension/manifest.json` (for example, `v0.4.1`). Tags ending in `-rc.N`, where N is a positive integer, publish a prerelease without replacing the latest stable release (for example, `v0.4.1-rc.1`). Ordinary branch pushes only produce CI artifacts. The release checksum file covers the downloadable assets, while the local build checksum file also covers raw binaries and license files.
 
 Release creation uses the workflow's repository token, with write access limited to the publishing job. Native executables are not signed by this workflow.
+
+## School chat frontends
+
+Use the newer [school chat page](https://xipuai-xjtlu-edu-cn-s.xjtlu.edu.cn/chat) for setup and normal use. The browser bridge selects the school protocol from the tab's route. Both `/v3/chat` and `/chat` use the same dedicated-session checks: a unique name, a confirmed ID, and Context Count 0. The current `/chat` frontend uses its own sign-in store, model catalog, attachment payload, and generation endpoint. Images keep the same bridge size and model-capability checks. Legacy `/v3/chat` remains compatible with text and one image per request. No request is automatically replayed through the other frontend after an error.
+
+Keep one school chat tab open when choosing a frontend; the most recently connected chat tab receives requests. Other pages on the school domain cannot establish a bridge connection. **Use webpage send flow** currently requires `/v3/chat`; turn it off for `/chat`.
+
+The `/chat` adapter is covered by synthetic protocol and native-host integration tests. Live checks have also verified model discovery, streamed text, single-image input through Responses, two ordered images through Chat Completions, and a two-request isolation check. These checks do not establish compatibility with every model or session configuration; an advertised model can still fail during generation. School errors are returned without automatic retries.
+
+The newer webpage's ordinary chat uploader allows multiple files of any type, with default UI limits of ten files and 30 MiB per file. Its document-parsing mode has separate format and option settings. The bridge sends its supported [file inputs](#files) through ordinary chat with attachment URLs in upload order. Selecting a file does not guarantee successful parsing or establish a server-side limit. The webpage's broader upload controls do not change the bridge's attachment limits.
+
+The school interface also exposes dedicated document-parsing options and asynchronous media creation. These controls are not currently mapped to the local API. Search annotations and media task results need separate response handling; their presence does not establish native support for OpenAI function calls, JSON Schema enforcement, token limits, or per-request token usage.
 
 ## Platforms and release limits
 

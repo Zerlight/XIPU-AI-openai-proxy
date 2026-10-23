@@ -18,7 +18,7 @@ const sse = (wire) => {
   }}), { headers: { 'Content-Type': 'text/event-stream' } });
 };
 const flush = () => new Promise(resolve => setImmediate(resolve));
-function mount(responses, cancel = false, web = null) {
+function mount(responses, cancel = false, web = null, modern = false) {
   const events = [], calls = [];
   const pending = new Map();
   let listener;
@@ -48,6 +48,10 @@ function mount(responses, cancel = false, web = null) {
   };
   const root = { inert: false, contains: element => element === composer,
     __vue_app__: { config: { globalProperties: { $pinia: { state: { value: { user: { token: 'synthetic-school-token' } } } } } } } };
+  if (modern) root.__vue_app__.config.globalProperties.$pinia.state.value = {
+    [btoa('__XP_JM_USER__')]: { data: { token: 'synthetic-school-token' } }
+  };
+  const location = { origin: 'https://xipuai-xjtlu-edu-cn-s.xjtlu.edu.cn', pathname: modern ? '/chat' : '/v3/chat' };
   const composer = { value: web?.draft || '', getClientRects: () => [{}] };
   const webState = { sendCalls: [], visibleResponses: [], stopCalls: 0, root, originalFetch: window.fetch, timer: null, pageController: new AbortController() };
   const message = item => ({ type: { __name: 'MessageGroup' }, props: { item, loading: false, onStop: stop } });
@@ -98,7 +102,7 @@ function mount(responses, cancel = false, web = null) {
   webState.input = input;
   webState.messages = messages;
   vm.runInNewContext(source, {
-    window, location: { origin: 'https://xipuai-xjtlu-edu-cn-s.xjtlu.edu.cn' },
+    window, location,
     TextDecoder, AbortController, FormData, File, atob, btoa,
     setTimeout: callback => { webState.timer = callback; return 1; },
     clearTimeout: () => { webState.timer = null; },
@@ -106,7 +110,7 @@ function mount(responses, cancel = false, web = null) {
     localStorage: { getItem: () => 'en' }
   });
   return {
-    events, calls, web: webState, window,
+    events, calls, web: webState, window, location,
     request(op, body = payload, job = 'test-job') {
       const done = new Promise(resolve => pending.set(job, resolve));
       const message = { source: 'xipu-bridge', type: 'req', job, op, payload: body };
@@ -512,7 +516,349 @@ async function cancellationChecks() {
   assert.equal(h.events.at(-1).message, undefined);
 }
 
+async function modernChecks() {
+  const catalog = () => json({ code: 0, data: { model: { chat: { list: [{ value: model, multimodal: true }] } } } });
+  const h = mount([catalog()], false, null, true);
+  await h.request('models');
+  assert.equal(h.events[0].result.data.models[0].value, model);
+  assert.ok(h.calls[0].url.endsWith('/api/v2/chat/configV3?lang=en'));
+  assert.equal(h.calls[0].headers['x-lang'], 'en');
+  assert.equal(h.calls[0].headers['x-platform'], 'web');
+  assert.ok(!JSON.stringify(h.events).includes('synthetic-school-token'));
+
+  const sent = mount([list(), sse('data: {"type":"string","data":"OK"}\n\n')], false, null, true);
+  await sent.request('chat');
+  assert.equal(sent.events.at(-1).message, undefined);
+  assert.ok(sent.calls.at(-1).url.endsWith('/api/v2/chat/response'));
+  assert.deepEqual(sent.calls.at(-1).body, { text: payload.text, online: 0, thinking: 'minimal', sessionId: 42,
+    responseId: null, intent: 'chat', attachments: [], options: null });
+
+  const image = { name: 'sample.png', mime: 'image/png', data: Buffer.from('89504e470d0a1a0a', 'hex').toString('base64') };
+  const url = 'https://images.example.test/sample.png';
+  const uploaded = mount([catalog(), list(), json({ code: 0, data: { file_url: url } }),
+    sse('data: {"type":"string","data":"IMAGE_OK"}\n\n')], false, null, true);
+  await uploaded.request('chat', { ...payload, images: [image] });
+  assert.equal(uploaded.events.at(-1).message, undefined);
+  assert.equal(uploaded.calls[2].body.has('accept'), false);
+  assert.deepEqual(uploaded.calls[3].body.attachments, [url]);
+  assert.equal(uploaded.calls[3].body.files, undefined);
+
+  const secondImage = { ...image, name: 'second.png' };
+  const secondURL = 'https://images.example.test/second.png';
+  const multiple = mount([catalog(), list(), json({ code: 0, data: { file_url: url } }),
+    json({ code: 0, data: { file_url: secondURL } }),
+    sse('data: {"type":"string","data":"IMAGES_OK"}\n\n')], false, null, true);
+  await multiple.request('chat', { ...payload, images: [image, secondImage] });
+  assert.equal(multiple.events.at(-1).message, undefined);
+  assert.deepEqual(multiple.calls.slice(2, 4).map(call => call.body.get('file').name), ['sample.png', 'second.png']);
+  assert.deepEqual(multiple.calls[4].body.attachments, [url, secondURL]);
+  assert.equal(multiple.calls.length, 5);
+
+  const uploadFailed = mount([catalog(), list(), json({ code: 0, data: { file_url: url } }),
+    json({ code: 10008 })], false, null, true);
+  await uploadFailed.request('chat', { ...payload, images: [image, secondImage] });
+  assert.match(uploadFailed.events.at(-1).message, /Upload image 2\/2 \("second.png"\):.*10008/);
+  assert.equal(uploadFailed.events.at(-1).code, 'attachment_upload_failed');
+  assert.equal(uploadFailed.events.at(-1).attachment_index, 1);
+  assert.deepEqual(uploadFailed.calls.slice(2).map(call => call.body.get('file').name), ['sample.png', 'second.png']);
+  assert.equal(uploadFailed.calls.length, 4, 'neither completed nor failed uploads are retried');
+  assert.ok(uploadFailed.calls.every(call => !call.url.endsWith('/api/v2/chat/response')), 'an upload failure prevents generation');
+
+  const unsafe = mount([list([{ ...session, contextCount: 5 }])], false, null, true);
+  await unsafe.request('chat');
+  assert.match(unsafe.events.at(-1).message, /Context Count 0/);
+  assert.equal(unsafe.calls.length, 1);
+  for (const body of [{ code: 0, data: { models: [model] } }, { code: 0, data: { model: { chat: { list: {} } } } }]) {
+    const invalid = mount([json(body)], false, null, true);
+    await invalid.request('models');
+    assert.match(invalid.events.at(-1).message, /invalid model list/);
+    assert.equal(invalid.calls.length, 1, 'never fall back to legacy endpoints');
+  }
+  const refused = mount([], false, null, true);
+  await refused.request('chat', { ...payload, debug_web_session: true });
+  assert.equal(refused.events.at(-1).code, 'debug_web_session_unavailable');
+  assert.equal(refused.calls.length, 0);
+  const signedOut = mount([], false, null, true);
+  signedOut.web.root.__vue_app__.config.globalProperties.$pinia.state.value = { user: { token: 'synthetic-school-token' } };
+  await signedOut.request('models');
+  assert.match(signedOut.events.at(-1).message, /Sign in/);
+  assert.equal(signedOut.calls.length, 0, 'never reuse another frontend login store');
+  const rejected = mount([list(), json({ code: 10008 })], false, null, true);
+  await rejected.request('chat');
+  assert.match(rejected.events.at(-1).message, /Generate response:.*10008/);
+  assert.equal(rejected.calls.length, 2, 'never retry a rejected generation');
+  const finalError = { type: 'object', data: { errorjson: { message: 'synthetic upstream detail' } } };
+  for (const response of [json(finalError), sse('data: {"type":"string","data":"Partial"}\n\n'
+    + `data: ${JSON.stringify(finalError)}\n\n`)]) {
+    const failed = mount([list(), response], false, null, true);
+    await failed.request('chat');
+    assert.match(failed.events.at(-1).message, /Generate response:.*generation failure/);
+    assert.ok(!JSON.stringify(failed.events).includes('synthetic upstream detail'));
+    assert.equal(failed.events.filter(event => event.kind === 'done').length, 1);
+    assert.equal(failed.calls.length, 2);
+  }
+  const finished = mount([list(), sse('data: {"type":"string","data":"OK"}\n\n'
+    + 'data: {"type":"object","data":{"errorjson":null}}\n\n')], false, null, true);
+  await finished.request('chat');
+  assert.equal(finished.events.at(-1).message, undefined);
+  const navigated = mount([() => { navigated.location.pathname = '/user'; return catalog(); }], false, null, true);
+  await navigated.request('models');
+  assert.equal(navigated.events[0].result.data.models[0].value, model, 'in-flight catalog keeps its protocol');
+  const navigationError = mount([list(), () => { navigationError.location.pathname = '/user'; return json(finalError); }], false, null, true);
+  await navigationError.request('chat');
+  assert.match(navigationError.events.at(-1).message, /generation failure/);
+  h.location.pathname = '/user';
+  await h.request('models');
+  assert.match(h.events.at(-1).message, /Open an XIPU AI/);
+  assert.equal(h.calls.length, 1, 'navigation outside chat must prevent further requests');
+}
+
+async function fileChecks() {
+  const file = { kind: 'file', name: 'inventory.txt', mime: 'text/plain', data: Buffer.from('Blue: 17\nRed: 26\n').toString('base64') };
+  const pdf = { kind: 'file', name: 'report.pdf', mime: 'application/pdf', data: Buffer.from('%PDF-1.7\n1 0 obj\n<<>>\nendobj\n%%EOF\n').toString('base64') };
+  const image = { kind: 'image', name: 'chart.png', mime: 'image/png', data: Buffer.from('89504e470d0a1a0a', 'hex').toString('base64') };
+  const url = name => `https://files.example.test/${name}`;
+  const upload = name => json({ code: 0, data: { file_url: url(name) } });
+  const reply = () => sse('data: {"type":"string","data":"FILE_OK"}\n\n');
+  const catalog = multimodal => json({ code: 0, data: { model: { chat: { list: [{ value: model, multimodal }] } } } });
+  const previous = { ...session, model: 'another-model' };
+  const textModel = mount([list([previous]), catalog(false), json({ code: 0 }), list(), upload(file.name), reply()], false, null, true);
+  await textModel.request('chat', { ...payload, attachments: [file] });
+  assert.equal(textModel.events.at(-1).message, undefined, 'document input does not require image support');
+  assert.deepEqual(textModel.calls.at(-1).body.attachments, [url(file.name)]);
+  assert.equal(textModel.calls.at(-1).body.intent, 'chat', 'the school chooses document processing from ordinary-chat attachments');
+
+  let finishUpload;
+  const ordered = mount([catalog(true), list(), () => new Promise(resolve => { finishUpload = resolve; }),
+    upload(image.name), upload(file.name), reply()], false, null, true);
+  const waiting = ordered.request('chat', { ...payload, attachments: [pdf, image, file] });
+  await flush();
+  assert.equal(ordered.calls.length, 3, 'the next attachment waits for the previous upload');
+  finishUpload(upload(pdf.name));
+  await waiting;
+  assert.equal(ordered.events.at(-1).message, undefined);
+  assert.deepEqual(ordered.calls.slice(2, 5).map(call => call.body.get('file').name), [pdf.name, image.name, file.name]);
+  assert.deepEqual(ordered.calls.at(-1).body.attachments, [pdf.name, image.name, file.name].map(url));
+  for (const [index, attachment] of [pdf, image, file].entries()) {
+    const call = ordered.calls[index + 2];
+    assert.equal(call.body.has('accept'), false);
+    assert.equal(call.headers['Content-Type'], undefined);
+    assert.equal(call.body.get('file').type, attachment.mime);
+    assert.deepEqual(Buffer.from(await call.body.get('file').arrayBuffer()), Buffer.from(attachment.data, 'base64'));
+  }
+  assert.ok(!JSON.stringify(ordered.events).includes('files.example.test'), 'uploaded attachment URLs stay in the school page');
+
+  const markdown = { ...file, name: 'guide.markdown', mime: 'text/markdown', data: Buffer.from('# Guide\nSynthetic text: 文档\n').toString('base64') };
+  const csv = { ...file, name: 'table.CSV', mime: 'text/csv', data: Buffer.from('color,count\nblue,17\n').toString('base64') };
+  const four = [file, pdf, markdown, csv];
+  const formats = mount([list(), ...four.map(item => upload(item.name)), reply()], false, null, true);
+  await formats.request('chat', { ...payload, attachments: four });
+  assert.equal(formats.events.at(-1).message, undefined);
+  assert.deepEqual(formats.calls.at(-1).body.attachments, four.map(item => url(item.name)));
+  const failed = mount([list(), upload(pdf.name), json({ code: 10008 })], false, null, true);
+  await failed.request('chat', { ...payload, attachments: [pdf, file, markdown] });
+  assert.match(failed.events.at(-1).message, /Upload file 2\/3 \("inventory.txt"\):.*10008/);
+  assert.equal(failed.events.at(-1).code, 'attachment_upload_failed');
+  assert.equal(failed.events.at(-1).attachment_index, 1);
+  assert.equal(failed.calls.length, 3, 'a failed upload is not retried and stops later uploads and generation');
+  assert.ok(failed.calls.every(call => !call.url.endsWith('/api/v2/chat/response')));
+  const aborted = mount([list(), ({ signal }) => new Promise((resolve, reject) => {
+    signal.addEventListener('abort', () => reject(new Error('upload cancelled')), { once: true });
+  })], 'upload', null, true);
+  await aborted.request('chat', { ...payload, attachments: [file, pdf] });
+  assert.equal(aborted.events.at(-1).message, 'The school request was cancelled.');
+  assert.equal(aborted.events.at(-1).code, undefined);
+  assert.equal(aborted.events.at(-1).attachment_index, undefined);
+  assert.equal(aborted.calls.length, 2);
+
+  for (const response of [
+    () => { throw new Error('Network connection failed'); },
+    new Response('invalid JSON'),
+    new Response('upstream unavailable', { status: 502 }),
+    json({ code: 10008 }),
+    json({ code: 0, data: { url: 'javascript:bad' } })
+  ]) {
+    const failure = mount([catalog(true), list(), upload(image.name), response], false, null, true);
+    await failure.request('chat', { ...payload, attachments: [image, pdf, file] });
+    const event = failure.events.at(-1);
+    assert.equal(event.code, 'attachment_upload_failed');
+    assert.equal(event.attachment_index, 1, 'image and document uploads share one ordinal');
+    assert.match(event.message, /^Upload file 2\/3 \("report.pdf"\): /);
+    assert.equal(failure.calls.length, 4, 'all upload failures stop later uploads and generation without retry');
+    assert.ok(!JSON.stringify(failure.events).includes(pdf.data));
+    assert.ok(!JSON.stringify(failure.events).includes('synthetic-school-token'));
+  }
+
+  for (const [modern, debug] of [[false, false], [false, true], [true, true]]) {
+    const rejected = mount([], false, null, modern);
+    await rejected.request('chat', { ...payload, attachments: [file], debug_web_session: debug });
+    assert.equal(rejected.events.at(-1).code, 'unsupported_file_frontend');
+    assert.equal(rejected.calls.length, 0, 'unsupported frontend rejects documents before reading or changing the school session');
+  }
+  const noVision = mount([catalog(false)], false, null, true);
+  await noVision.request('chat', { ...payload, attachments: [file, image] });
+  assert.equal(noVision.events.at(-1).code, 'unsupported_image_model');
+  assert.equal(noVision.calls.length, 1, 'a document does not bypass image capability validation');
+
+  const largeText = Buffer.alloc(9 * 1024 * 1024, 65);
+  const largeImage = Buffer.from(largeText);
+  Buffer.from(image.data, 'base64').copy(largeImage);
+  const invalidRequests = [
+    { attachments: null }, { attachments: {} }, { attachments: [null] },
+    { attachments: [{ ...file, kind: 'document' }] }, { attachments: Array(11).fill(file) },
+    { attachments: [file], images: [] },
+    ...['../inventory.txt', '.inventory.txt', 'nested/inventory.txt', 'nested\\inventory.txt', 'inventory.txt ', 'inventory.txt.',
+      'inventory\n.txt', '文件.txt', `${'a'.repeat(125)}.txt`, 'txt', 'file.exe'].map(name => ({ attachments: [{ ...file, name }] })),
+    { attachments: [{ ...file, mime: 'application/pdf' }] }, { attachments: [{ ...file, mime: undefined }] },
+    { attachments: [{ ...file, name: 'unknown.bin', mime: undefined }] },
+    ...['', '!!!!', 'QQ=', 'QR==', 'A'.repeat(Math.ceil(10 * 1024 * 1024 / 3) * 4 + 4)].map(data => ({ attachments: [{ ...file, data }] })),
+    ...[Buffer.from([0xc3, 0x28]), Buffer.from([65, 0, 66]), Buffer.from([65, 0x0b, 66]), Buffer.from([65, 0x7f, 66])].map(bytes => ({ attachments: [{ ...file, data: bytes.toString('base64') }] })),
+    ...['not a PDF\n%%EOF', '%PDF-3.0\n%%EOF', '%PDF-1.7\n', `%PDF-1.7\n%%EOF${' '.repeat(1024)}`].map(content => ({ attachments: [{ ...pdf, data: Buffer.from(content).toString('base64') }] })),
+    { attachments: [{ ...file, data: largeText.toString('base64') }, { ...image, data: largeImage.toString('base64') }] }
+  ];
+  for (const request of invalidRequests) {
+    const invalid = mount([], false, null, true);
+    await invalid.request('chat', { ...payload, ...request });
+    assert.ok(invalid.events.at(-1).message, 'invalid attachments are rejected');
+    assert.equal(invalid.calls.length, 0, 'attachment validation must complete before school requests');
+  }
+}
+
+async function attachmentCountChecks() {
+  const image = { kind: 'image', name: 'sample.png', mime: 'image/png', data: Buffer.from('89504e470d0a1a0a', 'hex').toString('base64') };
+  const file = { kind: 'file', name: 'sample.txt', mime: 'text/plain', data: Buffer.from('Synthetic text').toString('base64') };
+  const catalog = () => json({ code: 0, data: { model: { chat: { list: [{ value: model, multimodal: true }] } } } });
+  for (const [field, inputs] of [
+    ['images', Array.from({ length: 10 }, () => image)],
+    ['attachments', Array.from({ length: 10 }, (_, index) => index % 2 ? file : image)],
+    ['attachments', Array.from({ length: 10 }, () => file)]
+  ]) {
+    const urls = inputs.map((_, index) => `https://files.example.test/attachment-${index}`);
+    const responses = [list(), ...urls.map(file_url => json({ code: 0, data: { file_url } })),
+      sse('data: {"type":"string","data":"OK"}\n\n')];
+    if (inputs.some(item => item.kind === 'image')) responses.unshift(catalog());
+    const accepted = mount(responses, false, null, true);
+    await accepted.request('chat', { ...payload, [field]: inputs });
+    assert.equal(accepted.events.at(-1).message, undefined, 'the current frontend accepts ten attachments');
+    assert.equal(accepted.calls.filter(call => call.url.endsWith('/api/common/upload')).length, 10);
+    assert.deepEqual(accepted.calls.at(-1).body.attachments, urls, 'the attachment limit must not reorder or omit inputs');
+    const rejected = mount([], false, null, true);
+    await rejected.request('chat', { ...payload, [field]: [...inputs, inputs[0]] });
+    assert.equal(rejected.events.at(-1).code, 'attachment_limit_exceeded');
+    assert.match(rejected.events.at(-1).message, /at most 10 attachments/);
+    assert.equal(rejected.calls.length, 0, 'eleven attachments must fail before school requests');
+  }
+  for (const debug of [false, true]) {
+    for (const field of ['images', 'attachments']) {
+      const legacy = mount([], false, null, false);
+      await legacy.request('chat', { ...payload, [field]: [image, image], debug_web_session: debug });
+      assert.equal(legacy.events.at(-1).code, 'attachment_limit_exceeded');
+      assert.match(legacy.events.at(-1).message, /at most 1 attachment/);
+      assert.equal(legacy.calls.length, 0, 'legacy image count must fail before reading or changing the school session');
+    }
+  }
+}
+
+async function diagnosticChecks() {
+  for (const [status, code] of [[401, 'school_auth_required'], [403, 'school_http_error'], [429, 'school_rate_limited'],
+    [500, 'school_http_error'], [502, 'school_http_error'], [503, 'school_http_error'], [504, 'school_http_error']]) {
+    const rejected = await run('models', [json({ code: '10008' }, status)]);
+    const error = rejected.events.at(-1);
+    assert.equal(error.code, code);
+    assert.equal(error.stage, 'model_catalog');
+    assert.equal(error.http_status, status);
+    assert.equal(error.school_code, [502, 503, 504].includes(status) ? undefined : 10008);
+    assert.equal(rejected.calls.length, 1);
+  }
+  for (const [status, code] of [[200, 'school_invalid_response'], [401, 'school_auth_required'], [403, 'school_http_error'], [429, 'school_rate_limited']]) {
+    const invalid = await run('models', [new Response('<private-response>', { status })]);
+    assert.equal(invalid.events.at(-1).code, code);
+    assert.equal(invalid.events.at(-1).http_status, status);
+    assert.equal(invalid.events.at(-1).school_code, undefined);
+    assert.ok(!JSON.stringify(invalid.events).includes('private-response'));
+  }
+  const failedRead = await run('models', [{ ok: true, status: 200, json: async () => { throw new TypeError('private download URL'); } }]);
+  assert.equal(failedRead.events.at(-1).code, 'school_network_error');
+  assert.equal(failedRead.events.at(-1).stage, 'model_catalog');
+  assert.equal(failedRead.events.at(-1).http_status, 200);
+  assert.ok(!JSON.stringify(failedRead.events).includes('private download URL'));
+  for (const schoolCode of [10008, '10008', -17, '-17', 9007199254740992, 'unsafe-code', {}, null]) {
+    const rejected = await run('chat', [list(), json({ code: schoolCode })]);
+    const error = rejected.events.at(-1);
+    assert.equal(error.code, 'school_rejected');
+    assert.equal(error.stage, 'generation');
+    assert.equal(error.http_status, 200);
+    assert.equal(error.school_code, typeof schoolCode === 'number' && Number.isSafeInteger(schoolCode) ? schoolCode
+      : typeof schoolCode === 'string' && /^-?\d+$/.test(schoolCode) ? Number(schoolCode) : undefined);
+  }
+  const catalog = () => json({ code: 0, data: { models: [{ value: model }] } });
+  const failNetwork = () => { throw new TypeError('private network URL'); };
+  for (const [op, responses, body, stage] of [
+    ['models', [failNetwork], {}, 'model_catalog'],
+    ['chat', [failNetwork], payload, 'session_read'],
+    ['chat', [list(), failNetwork], payload, 'generation'],
+    ['chat', [list([{ ...session, model: 'another-model' }]), catalog(), failNetwork], payload, 'session_update'],
+    ['setup_create', [catalog(), list([]), failNetwork], { name: session.name, model }, 'session_create'],
+    ['setup_configure', [catalog(), list([{ ...session, contextCount: 5 }]), failNetwork], { name: session.name, model, session_id: session.id }, 'session_configure']
+  ]) {
+    const failed = await run(op, responses, body);
+    assert.equal(failed.events.at(-1).code, 'school_network_error');
+    assert.equal(failed.events.at(-1).stage, stage);
+    assert.equal(failed.events.at(-1).http_status, undefined);
+    assert.ok(!JSON.stringify(failed.events).includes('private network URL'));
+  }
+  const image = { name: 'sample.png', mime: 'image/png', data: Buffer.from('89504e470d0a1a0a', 'hex').toString('base64') };
+  for (const failure of [json({ code: '10008' }), json({ code: 429 }, 429), failNetwork]) {
+    const uploaded = await run('chat', [json({ code: 0, data: { models: [{ value: model, multimodal: true }] } }), list(), failure], { ...payload, images: [image] });
+    assert.equal(uploaded.events.at(-1).code, 'attachment_upload_failed');
+    assert.equal(uploaded.events.at(-1).stage, 'attachment_upload');
+    assert.equal(uploaded.events.at(-1).attachment_index, 0);
+    assert.equal(uploaded.events.at(-1).http_status, typeof failure === 'function' ? undefined : failure.status);
+    assert.equal(uploaded.events.at(-1).school_code, typeof failure === 'function' ? undefined : failure.status === 429 ? 429 : 10008);
+  }
+  for (const [items, code] of [[[], 'school_session_not_found'], [[session, session], 'school_session_ambiguous'],
+    [[{ ...session, contextCount: 5 }], 'school_session_unsafe'], [[{ ...session, id: null }], 'school_invalid_response']]) {
+    const guarded = await run('chat', [list(items)]);
+    assert.equal(guarded.events.at(-1).code, code);
+    assert.equal(guarded.events.at(-1).stage, 'session_read');
+    assert.equal(guarded.calls.length, 1);
+  }
+  const previous = { ...session, model: 'another-model' };
+  const unavailable = await run('chat', [list([previous]), json({ code: 0, data: { models: [] } })]);
+  assert.equal(unavailable.events.at(-1).code, 'school_model_unavailable');
+  assert.equal(unavailable.events.at(-1).stage, 'model_catalog');
+  const unchanged = await run('chat', [list([previous]), catalog(), json({ code: 0 }), list([previous])]);
+  assert.equal(unchanged.events.at(-1).code, 'school_session_update_failed');
+  assert.equal(unchanged.events.at(-1).stage, 'session_update');
+  const signedOut = mount([], false, null, true);
+  signedOut.web.root.__vue_app__.config.globalProperties.$pinia.state.value = {};
+  await signedOut.request('models');
+  assert.equal(signedOut.events.at(-1).code, 'school_auth_required');
+  assert.equal(signedOut.events.at(-1).stage, 'authentication');
+  assert.equal(signedOut.calls.length, 0);
+  for (const [wire, code, stage] of [
+    ['data: not-json\n\n', 'school_stream_error', 'stream'],
+    ['data: {"type":"string","data":"partial"}', 'school_stream_incomplete', 'stream'],
+    ['data: {"type":"string","data":"partial"}\n\ndata: {"code":"10008"}\n\n', 'school_rejected', 'generation']
+  ]) {
+    const failed = await run('chat', [list(), sse(wire)]);
+    assert.equal(failed.events.at(-1).code, code);
+    assert.equal(failed.events.at(-1).stage, stage);
+    assert.equal(failed.events.at(-1).http_status, 200);
+    assert.equal(failed.events.at(-1).school_code, code === 'school_rejected' ? 10008 : undefined);
+  }
+  const cancelled = await run('chat', [({ signal }) => new Promise((resolve, reject) => {
+    signal.addEventListener('abort', () => reject(new TypeError('cancelled transport')), { once: true });
+  })], payload, true);
+  assert.equal(cancelled.error, 'The school request was cancelled.');
+  assert.equal(cancelled.events.at(-1).code, undefined, 'cancellation is not a network or upload failure');
+}
+
 async function main() {
+  await modernChecks();
+  await fileChecks();
+  await attachmentCountChecks();
+  await diagnosticChecks();
   await setupChecks();
   await webSendChecks();
   await recoveryChecks();
@@ -687,7 +1033,10 @@ async function main() {
     controller.enqueue(new TextEncoder().encode('data: {"type":"string","data":"partial"}\n\n'));
   }, pull(controller) { controller.error(new Error('Synthetic stream read failure')); } }), { headers: { 'Content-Type': 'text/event-stream' } });
   const interrupted = await run('chat', [list(), readFailure]);
-  assert.equal(interrupted.error, 'Synthetic stream read failure');
+  assert.equal(interrupted.error, 'The school response stream could not be read; the response may be incomplete.');
+  assert.equal(interrupted.events.at(-1).code, 'school_stream_error');
+  assert.equal(interrupted.events.at(-1).stage, 'stream');
+  assert.equal(interrupted.events.at(-1).http_status, 200);
   // One large value and empty data lines exercise the cap without millions of stream chunks.
   const limit = 1024 * 1024;
   const largeText = 'x'.repeat(limit - 2 - JSON.stringify({ type: 'string', data: '' }).length);
@@ -736,20 +1085,21 @@ async function main() {
     assert.deepEqual(result.calls[3].body.files, ['https://images.example.test/upload.png']);
     assert.ok(!JSON.stringify(result.events).includes('upload.png'), 'upload metadata stays within the school page');
   }
-  const fourImages = [image,
+  const imageFormats = [image,
     { mime: 'image/jpeg', name: 'sample.jpg', data: Buffer.from([0xff, 0xd8, 0xff]).toString('base64') },
     { mime: 'image/gif', name: 'sample.gif', data: Buffer.from('GIF89a').toString('base64') },
     { mime: 'image/webp', name: 'sample.webp', data: Buffer.from('RIFFxxxxWEBP').toString('base64') }
   ];
-  const uploadedURLs = fourImages.map((item, index) => `https://images.example.test/${index}`);
-  const multiple = await run('chat', [catalog(1), list(), ...uploadedURLs.map(url => json({ code: 0, data: { url } })), imageReply()], { ...payload, images: fourImages });
-  assert.equal(multiple.error, undefined);
-  assert.deepEqual(multiple.calls.at(-1).body.files, uploadedURLs, 'preserve image order across sequential uploads');
-  const failedSecondUpload = await run('chat', [catalog(), list(), json({ code: 0, data: { url: uploadedURLs[0] } }), json({ code: 429, msg: 'second upload rate limited' }, 429)], { ...payload, images: fourImages });
-  assert.equal(failedSecondUpload.error, 'Upload image: second upload rate limited');
-  assert.equal(failedSecondUpload.calls.length, 4, 'stop on first failed upload without guessing a remote cleanup endpoint');
+  for (const [index, format] of imageFormats.entries()) {
+    const url = `https://images.example.test/${index}`;
+    const single = await run('chat', [catalog(1), list(), json({ code: 0, data: { url } }), imageReply()], { ...payload, images: [format] });
+    assert.equal(single.error, undefined);
+    assert.deepEqual(single.calls.at(-1).body.files, [url], 'legacy uploads one supported image');
+  }
   const rejectedUpload = await run('chat', [catalog(), list(), json({ ...schoolRejection, code: '10008' })], imagePayload);
-  assert.equal(rejectedUpload.error, 'Upload image: The school API rejected the request (school code 10008)');
+  assert.equal(rejectedUpload.error, `Upload image 1/1 (${JSON.stringify(image.name)}): The school API rejected the request (school code 10008)`);
+  assert.equal(rejectedUpload.events.at(-1).code, 'attachment_upload_failed');
+  assert.equal(rejectedUpload.events.at(-1).attachment_index, 0);
   assert.equal(rejectedUpload.calls.length, 3, 'rejected uploads must not be retried or followed by completion');
   assert.equal(rejectedUpload.events.filter(event => event.kind === 'event').length, 0, 'rejected upload bodies must not be forwarded');
   assert.ok(!JSON.stringify(rejectedUpload.events).includes('private'), 'upload error details and prompt content must not be exposed');
@@ -764,12 +1114,16 @@ async function main() {
   for (const response of [json({ code: 429, msg: 'upload rate limited' }, 429), json({ code: 0, data: {} }), json({ code: 0, data: { url: 'javascript:bad' } })]) {
     const failedUpload = await run('chat', [catalog(), list(), response], imagePayload);
     assert.ok(failedUpload.error);
+    assert.equal(failedUpload.events.at(-1).code, 'attachment_upload_failed');
+    assert.equal(failedUpload.events.at(-1).attachment_index, 0);
     assert.equal(failedUpload.calls.length, 3, 'failed uploads are never retried and no completion is sent');
   }
   const abortedUpload = await run('chat', [catalog(), list(), ({ signal }) => new Promise((resolve, reject) => {
     signal.addEventListener('abort', () => reject(new Error('upload cancelled')), { once: true });
   })], imagePayload, 'upload');
   assert.equal(abortedUpload.error, 'The school request was cancelled.');
+  assert.equal(abortedUpload.events.at(-1).code, undefined);
+  assert.equal(abortedUpload.events.at(-1).attachment_index, undefined);
   assert.equal(abortedUpload.calls.length, 3);
   const large = Buffer.alloc(9 * 1024 * 1024); imageBytes.copy(large);
   for (const images of [null, [image, image, image, image, image], [{ ...image, mime: 'image/svg+xml' }], [{ ...image, data: '!!!!' }], [{ ...image, data: Buffer.from('not a PNG').toString('base64') }], [{ ...image, data: 'A'.repeat(Math.ceil(10 * 1024 * 1024 / 3) * 4 + 4) }], [{ ...image, data: large.toString('base64') }, { ...image, data: large.toString('base64') }]]) {

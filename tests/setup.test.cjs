@@ -108,6 +108,14 @@ test("connected tab alone is not setup complete and has no implicit school reque
   assert.equal(ui.get("step-3").dataset.state, "upcoming");
 });
 
+test("sign-in guidance opens the modern chat frontend", async () => {
+  const ui = mount({ status: "no-tab" }); await tick();
+  assert.equal(ui.get("connection-panel").hidden, false);
+  assert.match(ui.get("connection-detail").textContent, /Open XIPU AI below and sign in/);
+  const schoolLinks = [...html.matchAll(/href="(https:\/\/xipuai[^"]+)"/g)].map(([, href]) => href);
+  assert.deepEqual(schoolLinks, ["https://xipuai-xjtlu-edu-cn-s.xjtlu.edu.cn/chat"]);
+});
+
 test("a busy bridge preserves the current step and disables actions until ready", async () => {
   const ui = mount(); await tick(); await ui.click("inspect");
   ui.state.status = "busy";

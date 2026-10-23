@@ -28,8 +28,10 @@ const setupStorage = privateStorage.then(() => chrome.storage.local.get(["setupP
 
 function trustedPage(port) {
   try {
+    const url = new URL(port.sender?.url);
     return port.name === "xipu" && port.sender?.id === chrome.runtime.id
-      && port.sender.frameId === 0 && ORIGINS.has(new URL(port.sender.url).origin);
+      && port.sender.frameId === 0 && ORIGINS.has(url.origin)
+      && /^\/(?:v3\/)?chat\/?$/.test(url.pathname);
   } catch { return false; }
 }
 
@@ -77,19 +79,19 @@ function cancelPage(reason = "The native connection closed; the request was not 
   else current = null;
 }
 
-function failRequest(job, message) {
-  sendNative({ type: "evt", evt: { job, kind: "done", message } });
+function failRequest(job, message, code) {
+  sendNative({ type: "evt", evt: { job, kind: "done", message, code, stage: "connection" } });
 }
 
 function dispatchRequest(message, page = [...ports].at(-1)) {
   if (current || setupRunning || !page) {
-    failRequest(message.job, current || setupRunning ? "Bridge busy; request not sent." : "No connected XIPU AI tab.");
+    failRequest(message.job, current || setupRunning ? "Bridge busy; request not sent." : "No connected XIPU AI tab.", current || setupRunning ? "bridge_busy" : "tab_unavailable");
     return;
   }
   current = { job: message.job, port: page, target: "api" };
   try { page.postMessage(message); }
   catch {
-    failRequest(message.job, "The XIPU AI tab disconnected; the request was not retried.");
+    failRequest(message.job, "The XIPU AI tab disconnected; the request was not retried.", "school_tab_disconnected");
     current = null;
   }
   renderStatus();
@@ -97,7 +99,7 @@ function dispatchRequest(message, page = [...ports].at(-1)) {
 
 function receiveChunk(message) {
   const { job, index, total, size, data } = message;
-  if (setupRunning) { failRequest(job, "Bridge busy; request not sent."); return; }
+  if (setupRunning) { failRequest(job, "Bridge busy; request not sent.", "bridge_busy"); return; }
   try {
     if (typeof job !== "string" || !job || job.length > 128
       || !Number.isInteger(size) || size < 1 || size > MAX_REQUEST_BYTES
@@ -108,7 +110,7 @@ function receiveChunk(message) {
       throw new Error("Invalid native request chunk.");
     }
     if (current && (current.target !== "assembly" || current.job !== job)) {
-      failRequest(job, "Bridge busy; request not sent.");
+      failRequest(job, "Bridge busy; request not sent.", "bridge_busy");
       return;
     }
     const bytes = atob(data);
@@ -117,11 +119,11 @@ function receiveChunk(message) {
     if (!current) {
       if (index !== 0) throw new Error("Native request chunks arrived out of order.");
       const page = [...ports].at(-1);
-      if (!page) { failRequest(job, "No connected XIPU AI tab."); return; }
+      if (!page) { failRequest(job, "No connected XIPU AI tab.", "tab_unavailable"); return; }
       const timer = setTimeout(() => {
         if (current?.target !== "assembly" || current.job !== job) return;
         cancelPage();
-        failRequest(job, "Native request assembly timed out; the request was not sent.");
+        failRequest(job, "Native request assembly timed out; the request was not sent.", "native_request_timeout");
         renderStatus();
       }, 30000);
       current = { job, port: page, target: "assembly", total, size, next: 0, bytes: new Uint8Array(size), timer };
@@ -140,7 +142,7 @@ function receiveChunk(message) {
     dispatchRequest(request, page);
   } catch {
     if (current?.target === "assembly" && current.job === job) cancelPage();
-    failRequest(job, "Invalid or incomplete native request chunks; the request was not sent.");
+    failRequest(job, "Invalid or incomplete native request chunks; the request was not sent.", "native_request_invalid");
     renderStatus();
   }
 }
@@ -238,7 +240,7 @@ chrome.runtime.onConnect.addListener(port => {
     if (current?.port === port) {
       const error = "The active XIPU AI tab closed; the request was not retried.";
       if (current.target === "ui") finishInspection(error);
-      else { failRequest(current.job, error); cancelPage(); }
+      else { failRequest(current.job, error, "school_tab_disconnected"); cancelPage(); }
     }
     notifyTabs(); renderStatus();
   });

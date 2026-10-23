@@ -12,7 +12,7 @@ import (
 func TestCapabilityErrorStatus(t *testing.T) {
 	for _, endpoint := range []string{"chat/completions", "responses"} {
 		for _, stream := range []bool{false, true} {
-			for _, code := range []string{"unsupported_image_model", "debug_web_session_unavailable", "", "unrecognized_error"} {
+			for _, code := range []string{"unsupported_image_model", "unsupported_file_frontend", "attachment_limit_exceeded", "debug_web_session_unavailable", "", "unrecognized_error"} {
 				t.Run(fmt.Sprintf("%s/stream=%v/code=%s", endpoint, stream, code), func(t *testing.T) {
 					s, host, sent := fixture(t, time.Second)
 					input := `"messages":[{"role":"user","content":"Hello"}]`
@@ -26,6 +26,12 @@ func TestCapabilityErrorStatus(t *testing.T) {
 					if code == "debug_web_session_unavailable" {
 						event.Message = "Open the configured conversation before using webpage send flow."
 					}
+					if code == "unsupported_file_frontend" {
+						event.Message = "File inputs require the newer chat frontend."
+					}
+					if code == "attachment_limit_exceeded" {
+						event.Message = "The selected frontend accepts at most one image."
+					}
 					raw, err := json.Marshal(event)
 					if err != nil {
 						t.Fatal(err)
@@ -35,7 +41,7 @@ func TestCapabilityErrorStatus(t *testing.T) {
 					}
 					got := <-result
 					wantStatus, wantCode, wantType := 502, "upstream_error", "bridge_error"
-					if code == "unsupported_image_model" || code == "debug_web_session_unavailable" {
+					if code == "unsupported_image_model" || code == "unsupported_file_frontend" || code == "attachment_limit_exceeded" || code == "debug_web_session_unavailable" {
 						wantStatus, wantCode, wantType = 400, code, "invalid_request_error"
 					}
 					var response struct {

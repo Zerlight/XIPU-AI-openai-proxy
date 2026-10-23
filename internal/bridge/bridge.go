@@ -18,12 +18,16 @@ import (
 )
 
 type Event struct {
-	Job     string          `json:"job"`
-	Kind    string          `json:"kind"`
-	Message string          `json:"message"`
-	Code    string          `json:"code,omitempty"`
-	Event   json.RawMessage `json:"event"`
-	Result  json.RawMessage `json:"result"`
+	Job             string          `json:"job"`
+	Kind            string          `json:"kind"`
+	Message         string          `json:"message"`
+	Code            string          `json:"code,omitempty"`
+	AttachmentIndex json.RawMessage `json:"attachment_index,omitempty"`
+	Stage           json.RawMessage `json:"stage,omitempty"`
+	HTTPStatus      json.RawMessage `json:"http_status,omitempty"`
+	SchoolCode      json.RawMessage `json:"school_code,omitempty"`
+	Event           json.RawMessage `json:"event"`
+	Result          json.RawMessage `json:"result"`
 }
 
 type job struct {
@@ -45,19 +49,40 @@ var errTimeout = errors.New("Request timed out and was cancelled; request was no
 var errIdle = errors.New("Request was idle and was cancelled; request was not retried")
 var errMissingText = errors.New("School did not return any text or reasoning")
 var errInvalidGeneration = errors.New("School output did not satisfy the requested format")
+var errNativeDisconnected = errors.New("Native connection closed; request was not retried")
 
 type unsupportedImageModelError string
 
 func (err unsupportedImageModelError) Error() string { return string(err) }
+
+type unsupportedFileFrontendError string
+
+func (err unsupportedFileFrontendError) Error() string { return string(err) }
+
+type attachmentLimitError string
+
+func (err attachmentLimitError) Error() string { return string(err) }
 
 type debugWebSessionUnavailableError string
 
 func (err debugWebSessionUnavailableError) Error() string { return string(err) }
 
 func errorStatus(err error) (int, string) {
+	var upload *attachmentUploadError
+	if errors.As(err, &upload) && upload.details != nil {
+		return 502, "attachment_upload_failed"
+	}
 	var unsupported unsupportedImageModelError
 	if errors.As(err, &unsupported) {
 		return 400, "unsupported_image_model"
+	}
+	var fileUnsupported unsupportedFileFrontendError
+	if errors.As(err, &fileUnsupported) {
+		return 400, "unsupported_file_frontend"
+	}
+	var attachmentLimit attachmentLimitError
+	if errors.As(err, &attachmentLimit) {
+		return 400, "attachment_limit_exceeded"
 	}
 	var unavailable debugWebSessionUnavailableError
 	if errors.As(err, &unavailable) {
@@ -66,11 +91,37 @@ func errorStatus(err error) (int, string) {
 	if errors.Is(err, errInvalidGeneration) {
 		return 502, "invalid_generation"
 	}
-	if errors.Is(err, errTimeout) || errors.Is(err, errIdle) {
+	if errors.Is(err, errIdle) {
+		return 504, "bridge_idle_timeout"
+	}
+	if errors.Is(err, errTimeout) {
 		return 504, "bridge_timeout"
+	}
+	if errors.Is(err, errNativeDisconnected) {
+		return 502, "native_disconnected"
 	}
 	if errors.Is(err, errMissingText) {
 		return 502, "missing_result"
+	}
+	var school *schoolRequestError
+	if errors.As(err, &school) {
+		switch school.code {
+		case "bridge_busy", "tab_unavailable", "school_tab_disconnected":
+			return 503, school.code
+		case "native_request_invalid":
+			return 502, school.code
+		case "native_request_timeout":
+			return 504, school.code
+		case "school_session_not_found", "school_session_ambiguous", "school_session_unsafe", "school_model_unavailable":
+			return 400, school.code
+		case "school_rate_limited":
+			if school.upstream["http_status"] == 429 {
+				return 429, school.code
+			}
+			return 502, school.code
+		case "school_auth_required", "school_http_error", "school_rejected", "school_invalid_response", "school_network_error", "school_stream_incomplete", "school_stream_error", "school_session_update_failed":
+			return 502, school.code
+		}
 	}
 	return 502, "upstream_error"
 }
@@ -177,14 +228,61 @@ func (s *Server) Receive(message map[string]json.RawMessage) error {
 }
 
 func apiError(w http.ResponseWriter, status int, code, message string) {
-	if recorder, ok := w.(*captureWriter); ok {
-		recorder.capture.Error = message
+	details := map[string]any{"message": message, "type": errorType(code), "code": code}
+	if code == "native_disconnected" || code == "tab_unavailable" {
+		details["stage"] = "connection"
 	}
-	writeJSON(w, status, map[string]any{"error": map[string]any{"message": message, "type": errorType(code), "code": code}})
+	writeAPIError(w, status, details)
+}
+
+func writeAPIError(w http.ResponseWriter, status int, details map[string]any) {
+	if recorder, ok := w.(*captureWriter); ok {
+		recorder.capture.Error, _ = details["message"].(string)
+	}
+	writeJSON(w, status, map[string]any{"error": details})
+}
+
+func errorDetails(err error) map[string]any {
+	status, code := errorStatus(err)
+	details := map[string]any{"message": err.Error(), "type": errorType(code), "code": code}
+	var upload *attachmentUploadError
+	if errors.As(err, &upload) && upload.details != nil {
+		details["param"] = upload.details.param
+		details["attachment"] = upload.details
+	}
+	var school *schoolRequestError
+	if errors.As(err, &school) {
+		if school.stage != "" {
+			details["stage"] = school.stage
+		}
+		if len(school.upstream) > 0 {
+			details["upstream"] = school.upstream
+		}
+	}
+	if code == "school_model_unavailable" {
+		details["param"] = "model"
+	}
+	if status == 429 {
+		details["type"] = "rate_limit_error"
+	}
+	if code == "native_disconnected" {
+		details["stage"] = "connection"
+	}
+	if code == "bridge_timeout" || code == "bridge_idle_timeout" {
+		details["stage"] = "response_wait"
+	}
+	if code == "invalid_generation" {
+		details["stage"] = "response_validation"
+	}
+	var parameter *parameterError
+	if errors.As(err, &parameter) {
+		details["param"] = parameter.param
+	}
+	return details
 }
 
 func errorType(code string) string {
-	if code == "unsupported_image_model" || code == "debug_web_session_unavailable" {
+	if code == "invalid_request" || code == "unsupported_parameter" || code == "unsupported_image_model" || code == "unsupported_file_frontend" || code == "attachment_limit_exceeded" || code == "debug_web_session_unavailable" || code == "school_session_not_found" || code == "school_session_ambiguous" || code == "school_session_unsafe" || code == "school_model_unavailable" {
 		return "invalid_request_error"
 	}
 	return "bridge_error"
@@ -290,7 +388,7 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request, op string, makePa
 	active.settings = s.options.Settings
 	s.current = active
 	s.mu.Unlock()
-	// Preparation may fetch images; hold the slot without holding the settings mutex.
+	// Preparation may fetch attachments; hold the slot without holding the settings mutex.
 	payload, err := makePayload(active.settings)
 	if err != nil {
 		s.release(active, false)
@@ -298,11 +396,13 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request, op string, makePa
 			return nil
 		}
 		if errors.Is(err, errTimeout) {
-			status, code := errorStatus(err)
-			apiError(w, status, code, err.Error())
+			status, _ := errorStatus(err)
+			details := errorDetails(err)
+			details["stage"] = "request_preparation"
+			writeAPIError(w, status, details)
 			return nil
 		}
-		apiError(w, 400, "invalid_request", err.Error())
+		requestError(w, "invalid_request", err)
 		return nil
 	}
 	if r.Context().Err() != nil {
@@ -356,7 +456,7 @@ func (s *Server) wait(ctx context.Context, active *job, timeout time.Duration, c
 		case <-ctx.Done():
 			return false, ctx.Err()
 		case <-s.stopped:
-			return false, errors.New("Native connection closed; request was not retried")
+			return false, errNativeDisconnected
 		case <-overall.C:
 			return false, errTimeout
 		case <-idle.C:
@@ -378,12 +478,24 @@ func (s *Server) wait(ctx context.Context, active *job, timeout time.Duration, c
 					text = "School request failed"
 				}
 				if event.Code == "unsupported_image_model" {
-					return true, unsupportedImageModelError(text)
+					return true, schoolFailure(event, unsupportedImageModelError(text))
+				}
+				if event.Code == "unsupported_file_frontend" {
+					return true, schoolFailure(event, unsupportedFileFrontendError(text))
+				}
+				if event.Code == "attachment_limit_exceeded" {
+					return true, schoolFailure(event, attachmentLimitError(text))
+				}
+				if event.Code == "attachment_upload_failed" {
+					var index *int
+					if json.Unmarshal(event.AttachmentIndex, &index) == nil && index != nil && *index >= 0 {
+						return true, schoolFailure(event, &attachmentUploadError{message: text, index: *index})
+					}
 				}
 				if event.Code == "debug_web_session_unavailable" {
-					return true, debugWebSessionUnavailableError(text)
+					return true, schoolFailure(event, debugWebSessionUnavailableError(text))
 				}
-				return true, errors.New(text)
+				return true, schoolFailure(event, errors.New(text))
 			}
 			if err := consume(event); err != nil {
 				return false, err
@@ -414,8 +526,8 @@ func (s *Server) catalog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		status, code := errorStatus(err)
-		apiError(w, status, code, err.Error())
+		status, _ := errorStatus(err)
+		writeAPIError(w, status, errorDetails(err))
 		return
 	}
 	if result == nil {

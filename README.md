@@ -21,7 +21,7 @@
 
 A lightweight local bridge between your signed-in XIPU AI tab and the apps you use. A browser extension and a standalone Go executable work together to serve an authenticated API on your computer.
 
-- **Text and images** through Chat Completions and the Responses API, with streaming support.
+- **Text, images, and documents** through Chat Completions and the Responses API, with streaming support.
 - **Function calls and structured output** through prompt-based compatibility and schema validation. Your client runs the tools.
 - **Local control** over sessions, request defaults, timeouts, and API credentials. Your school token stays in the browser.
 - **Standalone packages** for macOS, Windows, and Linux. No additional language runtime is needed.
@@ -64,13 +64,13 @@ Keep this folder in place. The extension is already configured to connect to the
 ### 3. Connect XIPU AI
 
 1. Click **XIPU AI Bridge** in Chrome's toolbar or Extensions menu. On the welcome screen, choose **Start setup** to open the guide in a new tab.
-2. Sign in to XIPU AI and refresh the tab, then load the available models in Setup.
+2. Open the recommended [XIPU AI chat page](https://xipuai-xjtlu-edu-cn-s.xjtlu.edu.cn/chat), sign in, and refresh the tab. Then load the available models in Setup.
 3. Choose a model and a unique conversation name, then click **Create bridge session**. Setup creates the conversation, sets Context Count to **0** with an empty system prompt, verifies it, and saves the connection settings.
 4. Copy the **base URL** and **API key** into your client. Setup does not send a model prompt.
 
 Already configured this computer? Choose **Use existing setup** on the welcome screen to open the dashboard. To select an existing dedicated conversation, use **Settings → Load from XIPU AI → Use session**, then **Save changes**.
 
-Keep the XIPU AI tab signed in. **Choose models in your client; the bridge updates the dedicated conversation automatically.**
+Keep the newer `/chat` tab open and signed in to use documents or multiple attachments. **Choose models in your client; the bridge updates the dedicated conversation automatically.**
 
 > [!NOTE]
 > Native packages are not code-signed or notarized; your operating system may block them. Browser integration requires platform-specific verification. See [installation options](docs/reference.md#installation-options) for Edge/Chromium and [troubleshooting](docs/reference.md#uninstall-and-troubleshooting) if setup fails.
@@ -90,18 +90,18 @@ Both `/v1/chat/completions` and `/v1/responses` are available. The model list co
 
 ## Know before you use it
 
-The bridge uses your existing school access and usage allowance. It handles one request at a time and does not retry failed school requests automatically. Model changes persist, including after a failed or cancelled request. Do not manually edit or send messages in the dedicated conversation while a request is active. Conversations and uploaded images remain on the school service.
+The bridge uses your existing school access and usage allowance. It handles one request at a time and does not retry failed school requests automatically. Model changes persist, including after a failed or cancelled request. Do not manually edit or send messages in the dedicated conversation while a request is active. Conversations and uploaded attachments remain on the school service.
 
 **Client token limits do not cap generation or charges.** The bridge accepts `max_tokens`, `max_completion_tokens`, and `max_output_tokens` for compatibility but cannot enforce them. Per-request token usage is unavailable; school points are a separate account balance. See [client compatibility](docs/reference.md#client-compatibility).
 
-Image input requires a vision-capable model. Function calls and JSON Schema output are prompted and validated by the bridge; they do not enable native tool calling or constrained decoding on the school server. The Responses API is stateless: clients must supply conversation history.
+Image input requires a vision-capable model. PDF and text files require the newer `/chat` frontend; see [file formats and limits](docs/reference.md#files). Function calls and JSON Schema output are prompted and validated by the bridge; they do not enable native tool calling or constrained decoding on the school server. The Responses API is stateless: clients must supply conversation history.
 
 ## Documentation
 
 | Guide | Contents |
 | --- | --- |
 | [Settings and sessions](docs/reference.md#settings) | Defaults, model selection, reasoning, timeouts, and API keys |
-| [API reference](docs/reference.md#api) | Text, images, streaming, function calls, structured output, and compatibility limits |
+| [API reference](docs/reference.md#api) | Text, images, files, streaming, function calls, structured output, and compatibility limits |
 | [Installation and troubleshooting](docs/reference.md#installation-options) | Other browsers, upgrades, uninstalling, and common errors |
 | [Security boundaries](docs/reference.md#security-boundaries) | Authentication, token handling, and local access |
 | [Testing guide](docs/verification.md) | Automated coverage and verification limits |

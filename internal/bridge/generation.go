@@ -37,8 +37,10 @@ type toolPolicy struct {
 	parallel    bool
 }
 
-func parseTools(raw []json.RawMessage, choice json.RawMessage, parallel *bool, responses bool) (toolPolicy, error) {
-	policy := toolPolicy{choice: "auto", parallel: true}
+func parseTools(raw []json.RawMessage, choice json.RawMessage, parallel *bool, responses bool) (policy toolPolicy, err error) {
+	parameter := "tools"
+	defer func() { err = atParameter(err, parameter) }()
+	policy = toolPolicy{choice: "auto", parallel: true}
 	if parallel != nil {
 		policy.parallel = *parallel
 	}
@@ -86,6 +88,7 @@ func parseTools(raw []json.RawMessage, choice json.RawMessage, parallel *bool, r
 		policy.definitions = append(policy.definitions, definition)
 	}
 	if len(choice) > 0 && string(choice) != "null" {
+		parameter = "tool_choice"
 		if json.Unmarshal(choice, &policy.choice) != nil {
 			var selected struct {
 				Type     string          `json:"type"`
@@ -281,9 +284,9 @@ func readRequest(w http.ResponseWriter, r *http.Request, target any, fields ...s
 		capture.RequestBodyTruncated = err != nil
 	}
 	if err != nil {
-		return errors.New("Invalid JSON request or request body exceeds 24 MiB")
+		return atParameter(errors.New("Invalid JSON request or request body exceeds 24 MiB"), "body")
 	}
-	return decodeObject(raw, target, fields...)
+	return atParameter(decodeObject(raw, target, fields...), "body")
 }
 
 type chatRequest struct {
@@ -318,10 +321,10 @@ func ignoredTokenLimits(limits ...tokenLimit) (string, error) {
 			continue
 		}
 		if *limit.value <= 0 {
-			return "", fmt.Errorf("%s must be a positive integer or null", limit.name)
+			return "", atParameter(fmt.Errorf("%s must be a positive integer or null", limit.name), limit.name)
 		}
 		if previous != nil && *previous != *limit.value {
-			return "", errors.New("Conflicting max_tokens and max_completion_tokens values")
+			return "", atParameter(errors.New("Conflicting max_tokens and max_completion_tokens values"), limit.name)
 		}
 		previous = limit.value
 		names = append(names, limit.name)
@@ -332,24 +335,24 @@ func ignoredTokenLimits(limits ...tokenLimit) (string, error) {
 func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	var body chatRequest
 	if err := readRequest(w, r, &body, "model", "messages", "stream", "thinking", "reasoning_effort", "online", "temperature", "tools", "tool_choice", "parallel_tool_calls", "response_format", "store", "stream_options", "n", "max_tokens", "max_completion_tokens"); err != nil {
-		apiError(w, 400, "invalid_request", err.Error())
+		requestError(w, "invalid_request", err)
 		return
 	}
 	ignored, err := ignoredTokenLimits(tokenLimit{"max_tokens", body.MaxTokens}, tokenLimit{"max_completion_tokens", body.MaxCompletion})
 	if err != nil {
-		apiError(w, 400, "invalid_request", err.Error())
+		requestError(w, "invalid_request", err)
 		return
 	}
 	if len(body.Temperature) > 0 && string(body.Temperature) != "null" {
-		apiError(w, 400, "unsupported_parameter", "Dedicated sessions use the temperature saved in the school session")
+		requestError(w, "unsupported_parameter", atParameter(errors.New("Dedicated sessions use the temperature saved in the school session"), "temperature"))
 		return
 	}
 	if body.Store != nil && *body.Store {
-		apiError(w, 400, "unsupported_parameter", "Stored completions are not supported")
+		requestError(w, "unsupported_parameter", atParameter(errors.New("Stored completions are not supported"), "store"))
 		return
 	}
 	if body.N != nil && *body.N != 1 {
-		apiError(w, 400, "unsupported_parameter", "Only n=1 is supported")
+		requestError(w, "unsupported_parameter", atParameter(errors.New("Only n=1 is supported"), "n"))
 		return
 	}
 	var options struct {
@@ -357,18 +360,18 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(body.StreamOptions) > 0 && string(body.StreamOptions) != "null" {
 		if err := decodeObject(body.StreamOptions, &options, "include_usage"); err != nil {
-			apiError(w, 400, "invalid_request", err.Error())
+			requestError(w, "invalid_request", atParameter(err, "stream_options"))
 			return
 		}
 	}
 	tools, err := parseTools(body.Tools, body.ToolChoice, body.Parallel, false)
 	if err != nil {
-		apiError(w, 400, "invalid_request", err.Error())
+		requestError(w, "invalid_request", err)
 		return
 	}
 	format, err := parseFormat(body.ResponseFormat, false)
 	if err != nil {
-		apiError(w, 400, "invalid_request", err.Error())
+		requestError(w, "invalid_request", atParameter(err, "response_format"))
 		return
 	}
 	effort := body.Thinking
@@ -377,7 +380,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 	}
 	generation := generationRequest{model: body.Model, messages: body.Messages, stream: body.Stream, effort: effort, online: body.Online, tools: tools, format: format}
 	if err := generation.prepare(); err != nil {
-		apiError(w, 400, "invalid_request", err.Error())
+		requestError(w, "invalid_request", atParameter(err, "messages"))
 		return
 	}
 	if ignored != "" {
@@ -399,6 +402,7 @@ type generationOutput interface {
 func (s *Server) generate(w http.ResponseWriter, r *http.Request, request generationRequest, output generationOutput) {
 	var model string
 	var deadline time.Time
+	var uploadSources []attachmentFailure
 	active := s.start(w, r, "chat", func(settings config.Settings) (any, error) {
 		deadline = time.Now().Add(time.Duration(settings.ChatTimeoutSeconds) * time.Second)
 		model = settings.DefaultModel
@@ -406,7 +410,7 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, request genera
 			model = *request.model
 		}
 		if strings.TrimSpace(model) == "" {
-			return nil, errors.New("Specify a model in the request or configure a default model")
+			return nil, atParameter(errors.New("Specify a model in the request or configure a default model"), "model")
 		}
 		effort := settings.Thinking
 		if request.effort != nil {
@@ -423,24 +427,35 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, request genera
 		case "true", "1":
 			online = 1
 		default:
-			return nil, errors.New("Online must be a boolean or 0 or 1")
+			return nil, atParameter(errors.New("Online must be a boolean or 0 or 1"), "online")
 		}
-		text, imageURLs, err := renderTranscript(request.messages, settings.OmitHistoricalImages, 4)
+		text, inputs, err := renderTranscript(request.messages, settings.OmitHistoricalImages, maxAttachments)
 		if err != nil {
 			return nil, err
 		}
 		request.text = text
 		var images []imageAttachment
+		var attachments []attachment
+		hasFile := false
 		total := 0
 		ctx, cancel := context.WithDeadline(r.Context(), deadline)
 		defer cancel()
-		for _, url := range imageURLs {
-			image, err := resolveImage(ctx, url)
+		for index, input := range inputs {
+			var image imageAttachment
+			var err error
+			kind := "image"
+			if input.File != nil {
+				hasFile = true
+				kind = "file"
+				image, err = resolveFile(ctx, *input.File)
+			} else {
+				image, err = resolveImage(ctx, input.ImageURL)
+			}
 			if err != nil {
 				if errors.Is(err, context.DeadlineExceeded) {
-					return nil, errTimeout
+					return nil, atParameter(errTimeout, input.Param)
 				}
-				return nil, err
+				return nil, atParameter(err, input.Param)
 			}
 			size := base64.StdEncoding.DecodedLen(len(image.Data))
 			if strings.HasSuffix(image.Data, "==") {
@@ -450,15 +465,21 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, request genera
 			}
 			total += size
 			if total > 16<<20 {
-				return nil, errors.New("Images exceed the 16 MiB combined limit")
+				return nil, errors.New("Attachments exceed the 16 MiB combined limit")
 			}
-			images = append(images, image)
+			attachments = append(attachments, attachment{Kind: kind, imageAttachment: image})
+			uploadSources = append(uploadSources, attachmentFailure{Index: index, Total: len(inputs), Filename: image.Name, Kind: kind, param: input.Param})
+			if kind == "image" {
+				images = append(images, image)
+			}
 		}
 		if !time.Now().Before(deadline) {
 			return nil, errTimeout
 		}
 		payload := map[string]any{"model": model, "text": request.prompt(), "thinking": effort, "online": online, "session_name": settings.SessionName, "debug_web_session": settings.DebugWebSession}
-		if len(images) > 0 {
+		if hasFile {
+			payload["attachments"] = attachments
+		} else if len(images) > 0 {
 			payload["images"] = images
 		}
 		return payload, nil
@@ -506,6 +527,10 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, request genera
 		}
 		return nil
 	})
+	var upload *attachmentUploadError
+	if errors.As(err, &upload) && upload.index < len(uploadSources) {
+		upload.details = &uploadSources[upload.index]
+	}
 	if err == nil && total == 0 {
 		err = errMissingText
 	}
@@ -527,8 +552,8 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request, request genera
 		if started {
 			output.fail(err)
 		} else {
-			status, code := errorStatus(err)
-			apiError(w, status, code, err.Error())
+			status, _ := errorStatus(err)
+			writeAPIError(w, status, errorDetails(err))
 		}
 		return
 	}
@@ -603,8 +628,7 @@ func (o *chatOutput) finish(result generationResult) error {
 	return nil
 }
 func (o *chatOutput) fail(err error) {
-	_, code := errorStatus(err)
-	writeSSE(o.writer, "error", map[string]any{"error": map[string]any{"message": err.Error(), "type": errorType(code), "code": code}})
+	writeSSE(o.writer, "error", map[string]any{"error": errorDetails(err)})
 	writeDone(o.writer)
 }
 func (o *chatOutput) response(result generationResult) map[string]any {

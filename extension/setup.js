@@ -70,7 +70,7 @@
     const states = {
       ready: ["Connected", "success", "The native app and XIPU AI tab are connected."],
       busy: ["In progress", "info", pending || snapshot.setupRunning ? "Setup is running. Keep XIPU AI open." : "A bridge request is running. Setup will be available when it finishes."],
-      "no-tab": ["Sign in needed", "warning", "The native app is connected. Open XIPU AI and sign in."],
+      "no-tab": ["Sign in needed", "warning", "The native app is connected. Open XIPU AI below and sign in."],
       offline: ["Native app offline", "secondary", "Install the native app if needed, then reconnect."]
     };
     const [label, variant, detail] = states[status] || states.offline;

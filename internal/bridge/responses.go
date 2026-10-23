@@ -3,6 +3,7 @@ package bridge
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 )
@@ -41,7 +42,7 @@ func responseMessages(input json.RawMessage, instructions string) ([]message, er
 	if json.Unmarshal(input, &items) != nil || len(items) == 0 {
 		return nil, errors.New("Input must be text or a nonempty array of messages and function items")
 	}
-	for _, raw := range items {
+	for index, raw := range items {
 		var item struct {
 			Type      string          `json:"type"`
 			Role      string          `json:"role"`
@@ -64,7 +65,7 @@ func responseMessages(input json.RawMessage, instructions string) ([]message, er
 			if item.Role != "user" && item.Role != "assistant" && item.Role != "system" && item.Role != "developer" {
 				return nil, errors.New("Unsupported input message role")
 			}
-			messages = append(messages, message{Role: item.Role, Content: item.Content})
+			messages = append(messages, message{Role: item.Role, Content: item.Content, contentPath: fmt.Sprintf("input[%d].content", index)})
 		case "function_call":
 			if err := decodeObject(raw, &item, "type", "id", "status", "name", "arguments", "call_id"); err != nil {
 				return nil, err
@@ -82,7 +83,7 @@ func responseMessages(input json.RawMessage, instructions string) ([]message, er
 			if len(item.Output) == 0 {
 				return nil, errors.New("Function output is required")
 			}
-			messages = append(messages, message{Role: "tool", ToolCallID: item.CallID, Content: item.Output})
+			messages = append(messages, message{Role: "tool", ToolCallID: item.CallID, Content: item.Output, contentPath: fmt.Sprintf("input[%d].output", index)})
 		default:
 			return nil, errors.New("Unsupported Responses input item type")
 		}
@@ -92,26 +93,35 @@ func responseMessages(input json.RawMessage, instructions string) ([]message, er
 func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	var body responsesRequest
 	if err := readRequest(w, r, &body, "model", "input", "instructions", "stream", "store", "background", "previous_response_id", "tools", "tool_choice", "parallel_tool_calls", "text", "reasoning", "online", "include", "truncation", "max_output_tokens"); err != nil {
-		apiError(w, 400, "invalid_request", err.Error())
+		requestError(w, "invalid_request", err)
 		return
 	}
 	ignored, err := ignoredTokenLimits(tokenLimit{"max_output_tokens", body.MaxOutput})
 	if err != nil {
-		apiError(w, 400, "invalid_request", err.Error())
+		requestError(w, "invalid_request", err)
 		return
 	}
-	if (body.Store != nil && *body.Store) || body.Background || (len(body.Previous) > 0 && string(body.Previous) != "null") || len(body.Include) > 0 || (body.Truncation != "" && body.Truncation != "disabled") {
-		apiError(w, 400, "unsupported_parameter", "Responses is stateless: storage, background requests, previous_response_id, include, and automatic truncation are not supported")
-		return
+	for _, option := range []struct {
+		name        string
+		unsupported bool
+	}{
+		{"store", body.Store != nil && *body.Store}, {"background", body.Background},
+		{"previous_response_id", len(body.Previous) > 0 && string(body.Previous) != "null"},
+		{"include", len(body.Include) > 0}, {"truncation", body.Truncation != "" && body.Truncation != "disabled"},
+	} {
+		if option.unsupported {
+			requestError(w, "unsupported_parameter", atParameter(errors.New("Responses is stateless: storage, background requests, previous_response_id, include, and automatic truncation are not supported"), option.name))
+			return
+		}
 	}
 	messages, err := responseMessages(body.Input, body.Instructions)
 	if err != nil {
-		apiError(w, 400, "invalid_request", err.Error())
+		requestError(w, "invalid_request", atParameter(err, "input"))
 		return
 	}
 	tools, err := parseTools(body.Tools, body.ToolChoice, body.Parallel, true)
 	if err != nil {
-		apiError(w, 400, "invalid_request", err.Error())
+		requestError(w, "invalid_request", err)
 		return
 	}
 	var text struct {
@@ -119,13 +129,13 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(body.Text) > 0 && string(body.Text) != "null" {
 		if err := decodeObject(body.Text, &text, "format"); err != nil {
-			apiError(w, 400, "invalid_request", err.Error())
+			requestError(w, "invalid_request", atParameter(err, "text"))
 			return
 		}
 	}
 	format, err := parseFormat(text.Format, true)
 	if err != nil {
-		apiError(w, 400, "invalid_request", err.Error())
+		requestError(w, "invalid_request", atParameter(err, "text.format"))
 		return
 	}
 	var reasoning struct {
@@ -133,13 +143,13 @@ func (s *Server) responses(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(body.Reasoning) > 0 && string(body.Reasoning) != "null" {
 		if err := decodeObject(body.Reasoning, &reasoning, "effort"); err != nil {
-			apiError(w, 400, "unsupported_parameter", "Only reasoning.effort is supported; reasoning summaries and encrypted state are unavailable")
+			requestError(w, "unsupported_parameter", atParameter(errors.New("Only reasoning.effort is supported; reasoning summaries and encrypted state are unavailable"), "reasoning"))
 			return
 		}
 	}
 	generation := generationRequest{model: body.Model, messages: messages, stream: body.Stream, effort: reasoning.Effort, online: body.Online, tools: tools, format: format}
 	if err := generation.prepare(); err != nil {
-		apiError(w, 400, "invalid_request", err.Error())
+		requestError(w, "invalid_request", atParameter(err, "input"))
 		return
 	}
 	if ignored != "" {
@@ -254,7 +264,5 @@ func (o *responsesOutput) finish(result generationResult) error {
 	return o.event("response.completed", map[string]any{"response": o.response(result, "completed", nil)})
 }
 func (o *responsesOutput) fail(err error) {
-	_, code := errorStatus(err)
-	failure := map[string]any{"code": code, "message": err.Error()}
-	o.event("response.failed", map[string]any{"response": o.response(generationResult{content: o.text.String()}, "failed", failure)})
+	o.event("response.failed", map[string]any{"response": o.response(generationResult{content: o.text.String()}, "failed", errorDetails(err))})
 }

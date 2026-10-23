@@ -46,7 +46,11 @@ function imageFixture() {
   header.writeUInt32BE(width); header.writeUInt32BE(height, 4); header[8] = 8; header[9] = 2;
   return Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), chunk('IHDR', header), chunk('IDAT', deflateSync(pixels)), chunk('IEND', Buffer.alloc(0))]);
 }
-async function main() {
+async function main(modern = false) {
+  const chatPath = modern ? '/chat' : '/v3/chat';
+  const catalogPath = modern ? '/api/v2/chat/configV3' : '/api/chat/config';
+  const completionPath = modern ? '/api/v2/chat/response' : '/api/chat/completions';
+  const attachmentField = modern ? 'attachments' : 'files';
   const binary = path.join(directory, process.platform === 'win32' ? 'bridge.exe' : 'bridge');
   execFileSync('go', ['build', '-o', binary, './cmd/xipu-bridge'], { cwd: root, stdio: 'pipe' });
   const reservation = net.createServer();
@@ -89,34 +93,57 @@ async function main() {
   vm.runInNewContext(fs.readFileSync(path.join(root, 'extension/background.js'), 'utf8'), { chrome, URL, atob, btoa, TextDecoder, Uint8Array, setTimeout, clearTimeout });
   const ui = message => new Promise(resolve => chrome.runtime.onMessage.emit(message, { id: extensionID, url: chrome.runtime.getURL('options.html') }, resolve));
   const [background, content] = pair();
-  Object.assign(background, { name: 'xipu', sender: { id: extensionID, frameId: 0, url: schoolOrigin + '/v3/chat' } });
+  Object.assign(background, { name: 'xipu', sender: { id: extensionID, frameId: 0, url: schoolOrigin + chatPath } });
   chrome.runtime.onConnect.emit(background);
-  const listeners = [], calls = [];
-  let uploadFails = false, ignoreModelSave = false;
+  const listeners = [], calls = [], pageRequests = [];
+  let uploadFails = false, failUploadNumber = 0, ignoreModelSave = false;
+  let schoolOverride;
   let schoolSession = { ...session };
   let setupSession;
   let setupCreatedAt;
   const uploadedURL = 'https://tosai.xjtlu.edu.cn/synthetic-image.png';
   const png = imageFixture();
+  const pdf = Buffer.from('%PDF-1.4\n%%EOF\n');
+  const textFile = Buffer.from('Item,Quantity\nBlue,7\nRed,9\n');
+  const fileURLs = {
+    'image/png': uploadedURL,
+    'application/pdf': 'https://tosai.xjtlu.edu.cn/synthetic-file.pdf',
+    'text/plain': 'https://tosai.xjtlu.edu.cn/synthetic-file.txt'
+  };
+  const models = [{ value: model, label: 'Synthetic model', multimodal: true }, { value: secondModel, label: 'Second model', multimodal: true }, { value: textOnlyModel, label: 'Text-only model', multimodal: false }];
   const window = {
     addEventListener(type, fn) { assert.equal(type, 'message'); listeners.push(fn); },
-    postMessage(data) { queueMicrotask(() => listeners.forEach(fn => fn({ source: window, origin: 'https://xipuai.xjtlu.edu.cn', data }))); },
+    postMessage(data) {
+      if (data.type === 'req' && data.op === 'chat') pageRequests.push(JSON.parse(JSON.stringify(data.payload)));
+      queueMicrotask(() => listeners.forEach(fn => fn({ source: window, origin: 'https://xipuai.xjtlu.edu.cn', data })));
+    },
     async fetch(url, options) {
       assert.equal(options.headers['Jm-Token'], token);
+      assert.equal(options.headers['x-lang'], modern ? 'en' : undefined);
+      assert.equal(options.headers['x-platform'], modern ? 'web' : undefined);
       if (url.endsWith('/api/common/upload')) {
         assert.equal(options.method, 'POST');
         assert.equal(options.headers['Content-Type'], undefined);
         assert.ok(options.body instanceof FormData);
-        assert.equal(options.body.get('accept'), 'image');
+        assert.equal(options.body.get('accept'), modern ? null : 'image');
         assert.equal(options.body.get('lang'), 'en');
         const file = options.body.get('file');
-        assert.equal(file.type, 'image/png');
-        assert.deepEqual(Buffer.from(await file.arrayBuffer()), png);
-        calls.push({ url, fileSize: file.size });
-        return new Response(JSON.stringify(uploadFails ? { code: 429, msg: 'Synthetic upload rate limit' } : { code: 0, data: { url: uploadedURL } }), { status: uploadFails ? 429 : 200 });
+        const expected = { 'image/png': png, 'application/pdf': pdf, 'text/plain': textFile }[file.type];
+        assert.ok(expected, 'unexpected attachment type');
+        assert.deepEqual(Buffer.from(await file.arrayBuffer()), expected);
+        if (file.type !== 'image/png') {
+          assert.ok(modern, 'legacy frontend uploaded a document');
+          assert.equal(file.name, file.type === 'application/pdf' ? 'sample.pdf' : 'sample.txt');
+        }
+        calls.push({ url, fileSize: file.size, fileType: file.type, fileName: file.name });
+        const failed = uploadFails || calls.filter(call => call.url.endsWith('/api/common/upload')).length === failUploadNumber;
+        return new Response(JSON.stringify(failed ? { code: 429, msg: 'Synthetic upload rate limit' } : { code: 0, data: { [modern ? 'file_url' : 'url']: fileURLs[file.type] } }), { status: failed ? 429 : 200 });
       }
       calls.push({ url, body: options.body && JSON.parse(options.body) });
-      if (url.includes('/api/chat/config?')) return new Response(JSON.stringify({ code: 0, data: { models: [{ value: model, label: 'Synthetic model', multimodal: true }, { value: secondModel, label: 'Second model', multimodal: true }, { value: textOnlyModel, label: 'Text-only model', multimodal: false }] } }));
+      if (schoolOverride && url.includes(schoolOverride.path)) {
+        return new Response(schoolOverride.body, { status: schoolOverride.status || 200, headers: { 'Content-Type': schoolOverride.contentType || 'application/json' } });
+      }
+      if (url.includes(catalogPath + '?')) return new Response(JSON.stringify({ code: 0, data: modern ? { model: { chat: { list: models } } } : { models } }));
       if (url.includes('/api/chat/session?')) return new Response(JSON.stringify({ code: 0, data: [schoolSession, ...(setupSession ? [setupSession] : [])] }));
       if (url.endsWith('/api/chat/saveSession')) {
         const body = calls.at(-1).body;
@@ -140,19 +167,28 @@ async function main() {
         if (!ignoreModelSave) schoolSession = { ...schoolSession, model: body.model };
         return new Response(JSON.stringify({ code: 0 }));
       }
-      assert.ok(url.endsWith('/api/chat/completions'));
+      assert.ok(url.endsWith(completionPath));
+      assert.equal(options.method, 'POST');
+      assert.equal(options.headers['Content-Type'], 'application/json');
+      assert.deepEqual(Object.keys(calls.at(-1).body).sort(), modern
+        ? ['attachments', 'intent', 'online', 'options', 'responseId', 'sessionId', 'text', 'thinking']
+        : ['files', 'lang', 'online', 'responseId', 'sessionId', 'text', 'thinking']);
       assert.equal(calls.at(-1).body.sessionId, session.id);
-      if (calls.at(-1).body.text === 'TRUNCATE') {
-        return new Response('data: {"type":"string","data":"TRUNCATED_CONTENT"}\n\ndata: {"type":"string","data":"unfinished', { headers: { 'Content-Type': 'text/event-stream' } });
-      }
+      assert.equal(calls.at(-1).body.responseId, null);
+      if (modern) {
+        assert.equal(calls.at(-1).body.intent, 'chat');
+        assert.equal(calls.at(-1).body.options, null);
+      } else assert.equal(calls.at(-1).body.lang, 'en');
       const prompt = calls.at(-1).body.text;
       const cleanEOF = prompt.includes('CLEAN_EOF');
       let answer = 'INTEGRATION_OK';
       if (prompt.startsWith('ROUTE_CASE')) {
         answer = 'ROUTED:' + schoolSession.model;
       } else if (prompt.includes('IMAGE_CASE')) {
-        assert.deepEqual(calls.at(-1).body.files, [uploadedURL]);
+        assert.deepEqual(calls.at(-1).body[attachmentField], [uploadedURL]);
         answer = 'IMAGE_OK';
+      } else if (prompt.includes('FILE_CASE')) {
+        answer = 'FILE_OK';
       } else if (prompt.includes('TOOL_SECOND')) {
         assert.ok(prompt.includes('14'));
         answer = JSON.stringify({ content: 'TOOL_SECOND_OK', tool_calls: [] });
@@ -167,9 +203,10 @@ async function main() {
       return new Response('data: {"type":"string","reasoning_data":"reason"}\r\n\r\ndata: {"type":"string","data":"INTEGRATION_OK"}\r\n\r\n' + (cleanEOF ? '' : 'data: [DONE]\r\n\r\n'), { headers: { 'Content-Type': 'text/event-stream' } });
     }
   };
-  const shared = { window, location: { origin: schoolOrigin }, URL, TextDecoder, AbortController, atob, Blob, File, FormData, Uint8Array };
+  const shared = { window, location: { origin: schoolOrigin, pathname: chatPath }, URL, TextDecoder, AbortController, atob, Blob, File, FormData, Uint8Array };
+  const stores = modern ? { [btoa('__XP_JM_USER__')]: { data: { token } } } : { user: { token } };
   vm.runInNewContext(fs.readFileSync(path.join(root, 'extension/page.js'), 'utf8'), { ...shared,
-    document: { querySelector: () => ({ __vue_app__: { config: { globalProperties: { $pinia: { state: { value: { user: { token } } } } } } } }) },
+    document: { querySelector: () => ({ __vue_app__: { config: { globalProperties: { $pinia: { state: { value: stores } } } } } }) },
     btoa, localStorage: { getItem: () => 'en' }
   });
   vm.runInNewContext(fs.readFileSync(path.join(root, 'extension/bridge.js'), 'utf8'), { ...shared, chrome: { runtime: { id: extensionID, connect: () => content } }, setTimeout });
@@ -191,7 +228,7 @@ async function main() {
     assert.equal(setupResult.config.port, originalConfig.port);
     assert.equal(setupResult.setupProgress.session_id, '9');
     assert.deepEqual(setupSession, { id: '9', name: 'New dedicated session', model, contextCount: 0, prompt: '', temperature: 0.4 });
-    assert.equal(calls.filter(call => call.url.endsWith('/api/chat/completions')).length, 0, 'setup must not generate');
+    assert.equal(calls.filter(call => call.url.endsWith(completionPath)).length, 0, 'setup must not generate');
     const setupCallCount = calls.length;
     assert.equal((await ui({ type: 'setupSchool', name: 'New dedicated session', model })).ok, true);
     assert.equal(calls.length, setupCallCount, 'completed setup must not issue new school mutations');
@@ -200,6 +237,54 @@ async function main() {
     const catalog = await fetch(base_url + '/models', { headers });
     assert.equal(catalog.status, 200);
     assert.equal((await catalog.json()).data[0].id, model);
+    schoolOverride = { path: catalogPath, status: 429, body: JSON.stringify({ code: 429, msg: 'Synthetic rate limit' }) };
+    const catalogBefore = calls.length;
+    const limitedCatalog = await fetch(base_url + '/models', { headers });
+    assert.equal(limitedCatalog.status, 429);
+    const catalogError = (await limitedCatalog.json()).error;
+    assert.equal(catalogError.code, 'school_rate_limited');
+    assert.equal(catalogError.type, 'rate_limit_error');
+    assert.equal(catalogError.stage, 'model_catalog');
+    assert.deepEqual(catalogError.upstream, { http_status: 429, school_code: 429 });
+    assert.equal(calls.length, catalogBefore + 1, 'catalog failure was retried');
+    schoolOverride = undefined;
+    const schoolUser = modern ? stores[btoa('__XP_JM_USER__')].data : stores.user;
+    delete schoolUser.token;
+    for (const endpoint of ['/chat/completions', '/responses']) for (const stream of [false, true]) {
+      const before = calls.length;
+      const request = { model, stream, ...(endpoint === '/responses' ? { input: 'Synthetic authentication check' } : { messages: [{ role: 'user', content: 'Synthetic authentication check' }] }) };
+      const response = await fetch(base_url + endpoint, { method: 'POST', headers, body: JSON.stringify(request) });
+      assert.equal(response.status, 502);
+      assert.match(response.headers.get('Content-Type'), /application\/json/);
+      const error = (await response.json()).error;
+      assert.equal(error.code, 'school_auth_required');
+      assert.equal(error.stage, 'authentication');
+      assert.equal(error.upstream, undefined);
+      assert.equal(calls.length, before, 'missing school authentication caused a request');
+    }
+    schoolUser.token = token;
+    for (const failure of [
+      { path: completionPath, body: { code: 10008 }, code: 'school_rejected', status: 502, stage: 'generation', upstream: { http_status: 200, school_code: 10008 } },
+      { path: completionPath, httpStatus: 503, body: { message: 'Synthetic unavailable service' }, code: 'school_http_error', status: 502, stage: 'generation', upstream: { http_status: 503 } },
+      { path: '/api/chat/session?', body: { code: 0, data: [] }, code: 'school_session_not_found', status: 400, stage: 'session_read' },
+      { path: '/api/chat/session?', body: { code: 0, data: [session, { ...session, id: 18 }] }, code: 'school_session_ambiguous', status: 400, stage: 'session_read' },
+      { path: '/api/chat/session?', body: { code: 0, data: [{ ...session, contextCount: 5 }] }, code: 'school_session_unsafe', status: 400, stage: 'session_read' }
+    ]) for (const endpoint of ['/chat/completions', '/responses']) for (const stream of [false, true]) {
+      const before = calls.length;
+      schoolOverride = { path: failure.path, body: JSON.stringify(failure.body), status: failure.httpStatus };
+      const request = { model, stream, ...(endpoint === '/responses' ? { input: 'Synthetic error check' } : { messages: [{ role: 'user', content: 'Synthetic error check' }] }) };
+      const response = await fetch(base_url + endpoint, { method: 'POST', headers, body: JSON.stringify(request) });
+      assert.equal(response.status, failure.status);
+      assert.match(response.headers.get('Content-Type'), /application\/json/);
+      const error = (await response.json()).error;
+      assert.equal(error.code, failure.code);
+      assert.equal(error.stage, failure.stage);
+      if (failure.upstream) assert.deepEqual(error.upstream, failure.upstream);
+      assert.ok(!JSON.stringify(error).includes(token), 'school credentials entered the HTTP error');
+      assert.equal(calls.slice(before).filter(call => call.url.includes(failure.path)).length, 1, 'failed operation was retried');
+      assert.equal(calls.slice(before).filter(call => call.url.endsWith(completionPath)).length, failure.stage === 'generation' ? 1 : 0, 'session rejection reached generation');
+    }
+    schoolOverride = undefined;
     // Compatibility fields must not change the school request.
     const probes = [
       ['/chat/completions', { model, messages: [{ role: 'user', content: 'hi' }], max_tokens: 16 }, 'max_tokens'],
@@ -207,7 +292,7 @@ async function main() {
       ['/chat/completions', { model, messages: [{ role: 'user', content: 'hi' }], max_completion_tokens: 16, stream: true, stream_options: { include_usage: true } }, 'max_completion_tokens']
     ];
     for (const [endpoint, request, ignored] of probes) {
-      const before = calls.filter(call => call.url.endsWith('/api/chat/completions')).length;
+      const before = calls.filter(call => call.url.endsWith(completionPath)).length;
       const response = await fetch(base_url + endpoint, { method: 'POST', headers, body: JSON.stringify(request) });
       assert.equal(response.status, 200, await response.clone().text());
       assert.equal(response.headers.get('X-XIPU-Ignored-Parameters'), ignored);
@@ -225,7 +310,7 @@ async function main() {
         const text = endpoint === '/responses' ? body.output.find(item => item.type === 'message').content[0].text : body.choices[0].message.content;
         assert.equal(text, 'INTEGRATION_OK');
       }
-      const completions = calls.filter(call => call.url.endsWith('/api/chat/completions'));
+      const completions = calls.filter(call => call.url.endsWith(completionPath));
       assert.equal(completions.length, before + 1, 'probe generated more than once');
       assert.equal(completions.at(-1).body.text, 'hi', 'compatibility fields changed the prompt');
       for (const key of ['max_tokens', 'max_completion_tokens', 'max_output_tokens', 'stream_options']) {
@@ -253,14 +338,29 @@ async function main() {
     assert.equal(imageResponse.status, 200, await imageResponse.clone().text());
     assert.equal((await imageResponse.json()).choices[0].message.content, 'IMAGE_OK');
     assert.ok(nativeChunks > 1, 'large image never crossed chunked Native Messaging');
-    const beforeFailedUpload = calls.filter(call => call.url.endsWith('/api/chat/completions')).length;
-    const beforeUploads = calls.filter(call => call.url.endsWith('/api/common/upload')).length;
+    assert.equal(pageRequests.at(-1).images.length, 1);
+    assert.equal(pageRequests.at(-1).attachments, undefined, 'image-only payload compatibility changed');
     uploadFails = true;
-    const uploadError = await fetch(base_url + '/chat/completions', { method: 'POST', headers, body: JSON.stringify(imageRequest) });
-    assert.equal(uploadError.status, 502);
-    assert.match((await uploadError.json()).error.message, /rate limit/i);
-    assert.equal(calls.filter(call => call.url.endsWith('/api/common/upload')).length, beforeUploads + 1, 'upload was retried');
-    assert.equal(calls.filter(call => call.url.endsWith('/api/chat/completions')).length, beforeFailedUpload, 'generation ran after upload failed');
+    for (const endpoint of ['/chat/completions', '/responses']) for (const stream of [false, true]) {
+      const before = calls.length;
+      const request = endpoint === '/responses'
+        ? { model, stream, instructions: 'Use the supplied attachment.', input: [{ role: 'user', content: [{ type: 'input_text', text: 'IMAGE_CASE' }, { type: 'input_image', image_url: imageURL }] }] }
+        : { ...imageRequest, stream };
+      const response = await fetch(base_url + endpoint, { method: 'POST', headers, body: JSON.stringify(request) });
+      assert.equal(response.status, 502);
+      assert.match(response.headers.get('Content-Type'), /application\/json/);
+      const error = (await response.json()).error;
+      const filename = pageRequests.at(-1).images[0].name;
+      assert.equal(error.type, 'bridge_error');
+      assert.equal(error.code, 'attachment_upload_failed');
+      assert.equal(error.stage, 'attachment_upload');
+      assert.deepEqual(error.upstream, { http_status: 429, school_code: 429 });
+      assert.equal(error.param, `${endpoint === '/responses' ? 'input' : 'messages'}[0].content[1]`);
+      assert.deepEqual(error.attachment, { index: 0, total: 1, filename, kind: 'image' });
+      assert.equal(error.message, `Attachment 1/1 (${filename}): Synthetic upload rate limit`);
+      assert.equal(calls.slice(before).filter(call => call.url.endsWith('/api/common/upload')).length, 1, 'upload was retried');
+      assert.equal(calls.slice(before).filter(call => call.url.endsWith(completionPath)).length, 0, 'generation ran after upload failed');
+    }
     uploadFails = false;
     assert.equal((await fetch(base_url + '/responses', { method: 'POST', body: '{}' })).status, 401);
     for (const ending of ['', ' CLEAN_EOF']) for (const stream of [false, true]) {
@@ -281,6 +381,79 @@ async function main() {
     const vision = await fetch(base_url + '/responses', { method: 'POST', headers, body: JSON.stringify({ model, store: false, input: [{ role: 'user', content: [{ type: 'input_text', text: 'IMAGE_CASE' }, { type: 'input_image', image_url: imageURL }] }] }) });
     assert.equal(vision.status, 200, await vision.clone().text());
     assert.equal((await vision.json()).output.find(item => item.type === 'message').content[0].text, 'IMAGE_OK');
+    const pdfPart = { type: 'input_file', filename: 'sample.pdf', file_data: 'data:application/pdf;base64,' + pdf.toString('base64') };
+    const textFilePart = { type: 'input_file', filename: 'sample.txt', file_data: textFile.toString('base64') };
+    const fileRequest = { model: textOnlyModel, store: false, input: [{ role: 'user', content: [{ type: 'input_text', text: 'FILE_CASE' }, pdfPart, textFilePart] }] };
+    const fileCases = [
+      ['/responses', fileRequest, ['application/pdf', 'text/plain']],
+      ['/responses', { model, store: false, stream: true, input: [{ role: 'user', content: [{ type: 'input_text', text: 'FILE_CASE' }, pdfPart, { type: 'input_image', image_url: imageURL }, textFilePart] }] }, ['application/pdf', 'image/png', 'text/plain']],
+      ['/chat/completions', { model: textOnlyModel, messages: [{ role: 'user', content: [{ type: 'text', text: 'FILE_CASE' }, { type: 'file', file: { filename: textFilePart.filename, file_data: textFilePart.file_data } }] }] }, ['text/plain']]
+    ];
+    for (const [endpoint, request, types] of fileCases) {
+      const before = calls.length;
+      const response = await fetch(base_url + endpoint, { method: 'POST', headers, body: JSON.stringify(request) });
+      assert.equal(response.status, modern ? 200 : 400, await response.clone().text());
+      const payload = pageRequests.at(-1);
+      assert.equal(payload.images, undefined, 'document payload used both attachment representations');
+      assert.deepEqual(payload.attachments.map(item => item.mime), types);
+      assert.deepEqual(payload.attachments.map(item => item.kind), types.map(type => type === 'image/png' ? 'image' : 'file'));
+      if (!modern) {
+        assert.match(response.headers.get('Content-Type'), /application\/json/);
+        const error = (await response.json()).error;
+        assert.equal(error.type, 'invalid_request_error');
+        assert.equal(error.code, 'unsupported_file_frontend');
+        assert.equal(calls.length, before, 'unsupported file caused a school request');
+        continue;
+      }
+      const result = await response.text();
+      assert.ok(result.includes('FILE_OK'));
+      if (request.stream) assert.ok(result.includes('response.completed'));
+      assert.equal(schoolSession.model, request.model, 'documents unnecessarily required an image-capable model');
+      const uploaded = calls.slice(before).filter(call => call.url.endsWith('/api/common/upload'));
+      assert.deepEqual(uploaded.map(call => call.fileType), types, 'attachment upload order changed');
+      const generated = calls.slice(before).filter(call => call.url.endsWith(completionPath));
+      assert.equal(generated.length, 1, 'document request generated more than once');
+      assert.deepEqual(generated[0].body.attachments, types.map(type => fileURLs[type]), 'completion lost or reordered uploaded attachments');
+    }
+    const countBefore = calls.length;
+    const countInput = modern ? Array(10).fill(textFilePart) : Array(2).fill({ type: 'input_image', image_url: imageURL });
+    const countResponse = await fetch(base_url + '/responses', { method: 'POST', headers, body: JSON.stringify({ model, stream: true, input: [{ role: 'user', content: [{ type: 'input_text', text: 'FILE_CASE' }, ...countInput] }] }) });
+    assert.equal(countResponse.status, modern ? 200 : 400, await countResponse.clone().text());
+    if (modern) {
+      const result = await countResponse.text();
+      assert.ok(result.includes('response.completed') && result.includes('FILE_OK'));
+      assert.equal(calls.slice(countBefore).filter(call => call.url.endsWith('/api/common/upload')).length, 10);
+      assert.deepEqual(calls.at(-1).body.attachments, Array(10).fill(fileURLs['text/plain']));
+    } else {
+      const error = (await countResponse.json()).error;
+      assert.equal(error.code, 'attachment_limit_exceeded');
+      assert.equal(error.type, 'invalid_request_error');
+      assert.equal(calls.length, countBefore, 'legacy image limit caused a school request');
+    }
+    if (modern) {
+      const files = [pdfPart, textFilePart, pdfPart];
+      for (const endpoint of ['/chat/completions', '/responses']) for (const stream of [false, true]) {
+        const before = calls.length;
+        failUploadNumber = calls.filter(call => call.url.endsWith('/api/common/upload')).length + 2;
+        const request = endpoint === '/responses'
+          ? { model: textOnlyModel, stream, instructions: 'Use the supplied attachments.', input: [{ role: 'user', content: [{ type: 'input_text', text: 'FILE_CASE' }, ...files] }] }
+          : { model: textOnlyModel, stream, messages: [{ role: 'user', content: [{ type: 'text', text: 'FILE_CASE' }, ...files.map(({ type, ...file }) => ({ type: 'file', file }))] }] };
+        const response = await fetch(base_url + endpoint, { method: 'POST', headers, body: JSON.stringify(request) });
+        assert.equal(response.status, 502, await response.clone().text());
+        assert.match(response.headers.get('Content-Type'), /application\/json/);
+        const error = (await response.json()).error;
+        assert.equal(error.type, 'bridge_error');
+        assert.equal(error.code, 'attachment_upload_failed');
+        assert.equal(error.stage, 'attachment_upload');
+        assert.deepEqual(error.upstream, { http_status: 429, school_code: 429 });
+        assert.equal(error.param, `${endpoint === '/responses' ? 'input' : 'messages'}[0].content[2]`);
+        assert.deepEqual(error.attachment, { index: 1, total: 3, filename: 'sample.txt', kind: 'file' });
+        assert.equal(error.message, 'Attachment 2/3 (sample.txt): Synthetic upload rate limit');
+        assert.equal(calls.slice(before).filter(call => call.url.endsWith('/api/common/upload')).length, 2, 'failed upload was retried or later files were uploaded');
+        assert.equal(calls.slice(before).filter(call => call.url.endsWith(completionPath)).length, 0, 'generation ran after the second upload failed');
+      }
+      failUploadNumber = 0;
+    }
     const omission = '[Earlier image omitted; image content is unavailable. Use only the existing text descriptions.]';
     const caption = 'The earlier image shows a blue circle.';
     const historyRequest = (endpoint, stream, variant = 'answered') => {
@@ -303,7 +476,7 @@ async function main() {
       assert.equal(error.code, 'unsupported_image_model');
       assert.match(error.message, /image support/i);
       assert.equal(schoolSession.model, previousModel, 'unsupported image changed the selected school model');
-      assert.ok(calls.slice(before).every(call => !/\/(?:saveSession|upload|completions)$/.test(call.url)), 'unsupported image caused a school mutation, upload, or generation');
+      assert.ok(calls.slice(before).every(call => !/\/(?:saveSession|upload|completions|response)$/.test(call.url)), 'unsupported image caused a school mutation, upload, or generation');
     };
     // Capability errors travel through every extension world and stay JSON even for streaming clients.
     for (const endpoint of ['/chat/completions', '/responses']) for (const stream of [false, true]) {
@@ -322,10 +495,10 @@ async function main() {
       const result = await response.text();
       assert.ok(result.includes('INTEGRATION_OK'));
       if (stream) assert.ok(result.includes(endpoint === '/responses' ? 'response.completed' : 'data: [DONE]'));
-      const generated = calls.slice(before).filter(call => call.url.endsWith('/api/chat/completions'));
+      const generated = calls.slice(before).filter(call => call.url.endsWith(completionPath));
       assert.equal(generated.length, 1, 'text continuation generated more than once');
       assert.equal(schoolSession.model, textOnlyModel);
-      assert.deepEqual(generated[0].body.files, []);
+      assert.deepEqual(generated[0].body[attachmentField], []);
       assert.ok(generated[0].body.text.includes(omission), 'omission was not disclosed to the model');
       assert.ok(generated[0].body.text.includes(caption), 'previous textual description was lost');
       assert.ok(generated[0].body.text.includes('Continue using the previous description.'));
@@ -404,23 +577,34 @@ async function main() {
         assert.deepEqual(JSON.parse(text), { answer: 42 });
       }
     }
-    for (const stream of [false, true]) {
-      const response = await fetch(base_url + '/chat/completions', { method: 'POST', headers, body: JSON.stringify({ model, messages: [{ role: 'user', content: 'TRUNCATE' }], stream }) });
+    for (const endpoint of ['/chat/completions', '/responses']) for (const stream of [false, true]) for (const rejected of [false, true]) {
+      const before = calls.length;
+      schoolOverride = { path: completionPath, contentType: 'text/event-stream', body: 'data: {"type":"string","data":"PARTIAL_CONTENT"}\n\n' + (rejected ? 'data: {"code":10008}\n\n' : 'data: {"type":"string","data":"unfinished') };
+      const request = { model, stream, ...(endpoint === '/responses' ? { input: 'Synthetic stream error check' } : { messages: [{ role: 'user', content: 'Synthetic stream error check' }] }) };
+      const response = await fetch(base_url + endpoint, { method: 'POST', headers, body: JSON.stringify(request) });
+      let error;
       if (stream) {
         assert.equal(response.status, 200);
         const text = await response.text();
-        assert.ok(text.includes('TRUNCATED_CONTENT'));
-        assert.ok(text.includes('event: error\n'));
+        assert.ok(text.includes('PARTIAL_CONTENT'));
         const frames = text.split('\n\n').map(frame => frame.split('\n').find(line => line.startsWith('data: '))).filter(Boolean).map(line => line.slice(6)).filter(data => data !== '[DONE]').map(JSON.parse);
-        assert.ok(frames.some(frame => /incomplete SSE event/.test(frame.error?.message || '')));
+        error = frames.map(frame => endpoint === '/responses' ? frame.response?.error : frame.error).find(Boolean);
+        assert.ok(error, 'stream failure lost its error payload');
+        assert.ok(!frames.some(frame => frame.type === 'response.completed'));
         assert.ok(!frames.some(frame => frame.choices?.some(choice => choice.finish_reason === 'stop')));
       } else {
         assert.equal(response.status, 502);
         const body = await response.json();
-        assert.match(body.error.message, /incomplete SSE event/);
+        error = body.error;
         assert.equal(body.choices, undefined);
+        assert.equal(body.output, undefined);
       }
+      assert.equal(error.code, rejected ? 'school_rejected' : 'school_stream_incomplete');
+      assert.equal(error.stage, rejected ? 'generation' : 'stream');
+      assert.deepEqual(error.upstream, { http_status: 200, ...(rejected ? { school_code: 10008 } : {}) });
+      assert.equal(calls.slice(before).filter(call => call.url.endsWith(completionPath)).length, 1, 'stream failure was retried');
     }
+    schoolOverride = undefined;
     for (const [endpoint, requestedModel, stream] of [
       ['/chat/completions', secondModel, false], ['/responses', model, true],
       ['/responses', secondModel, false], ['/chat/completions', model, true],
@@ -437,20 +621,24 @@ async function main() {
       const paths = calls.slice(beforeCalls).map(call => new URL(call.url).pathname);
       assert.equal(paths.filter(path => path.endsWith('/api/chat/saveSession')).length, changes ? 1 : 0);
       assert.equal(paths.filter(path => path.endsWith('/api/chat/session')).length, changes ? 2 : 1);
-      assert.ok(paths.at(-1).endsWith('/api/chat/completions'));
+      assert.ok(paths.at(-1).endsWith(completionPath));
       if (changes) assert.ok(paths.at(-2).endsWith('/api/chat/session'), 'saved model was not verified before generation');
       if (stream) assert.ok(result.includes(endpoint === '/responses' ? 'response.completed' : 'data: [DONE]'));
     }
-    const before = calls.filter(x => x.url.endsWith('/api/chat/completions')).length;
+    const before = calls.filter(x => x.url.endsWith(completionPath)).length;
     const unknown = await fetch(base_url + '/chat/completions', { method: 'POST', headers, body: JSON.stringify({ model: 'unknown-model', messages: [{ role: 'user', content: 'Do not generate' }] }) });
-    assert.equal(unknown.status, 502);
-    assert.match((await unknown.json()).error.message, /model/i);
-    assert.equal(calls.filter(x => x.url.endsWith('/api/chat/completions')).length, before);
+    assert.equal(unknown.status, 400);
+    const unknownError = (await unknown.json()).error;
+    assert.equal(unknownError.code, 'school_model_unavailable');
+    assert.equal(unknownError.stage, 'model_catalog');
+    assert.equal(calls.filter(x => x.url.endsWith(completionPath)).length, before);
     ignoreModelSave = true;
     const unconfirmed = await fetch(base_url + '/responses', { method: 'POST', headers, body: JSON.stringify({ model: secondModel, input: 'Do not generate' }) });
     assert.equal(unconfirmed.status, 502);
-    assert.match((await unconfirmed.json()).error.message, /model|session/i);
-    assert.equal(calls.filter(x => x.url.endsWith('/api/chat/completions')).length, before);
+    const updateError = (await unconfirmed.json()).error;
+    assert.equal(updateError.code, 'school_session_update_failed');
+    assert.equal(updateError.stage, 'session_update');
+    assert.equal(calls.filter(x => x.url.endsWith(completionPath)).length, before);
     ignoreModelSave = false;
     const saved = await ui({ type: 'saveSettings', config: { default_model: model, thinking: 'high', online: true, include_reasoning: false } });
     assert.equal(saved.ok, true);
@@ -477,10 +665,10 @@ async function main() {
     const [code] = await exited;
     assert.equal(code, 0, errorOutput);
     assert.equal(errorOutput, '');
-    console.log('native integration passed: real Go process, all extension worlds, verified model switching, token-limit compatibility and unknown usage, chunked PNG upload, upload failure without retry, image capability errors and opt-in historical omission, Responses JSON/SSE/vision, tool round trip, JSON Schema validation, optional school DONE with clean EOF, incomplete-frame errors, settings/key rotation and host EOF');
+    console.log((modern ? 'modern' : 'legacy') + ' native integration passed: real Go process, all extension worlds, verified model switching, token-limit compatibility and unknown usage, chunked PNG upload, ordered document attachments and frontend capability errors, upload failure without retry, image capability errors and opt-in historical omission, Responses JSON/SSE/vision, tool round trip, JSON Schema validation, optional school DONE with clean EOF, incomplete-frame errors, settings/key rotation and host EOF');
   } finally {
     clearTimeout(deadline);
     if (child.exitCode === null && child.signalCode === null) { const stopped = once(child, 'exit'); child.kill(); await stopped; }
   }
 }
-main().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => fs.rmSync(directory, { recursive: true, force: true }));
+main().then(() => main(true)).catch(error => { console.error(error); process.exitCode = 1; }).finally(() => fs.rmSync(directory, { recursive: true, force: true }));

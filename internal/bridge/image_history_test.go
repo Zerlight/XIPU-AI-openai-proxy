@@ -43,7 +43,7 @@ func TestHistoricalImageBoundary(t *testing.T) {
 		{"assistant without later user", []message{old, answer}, true, "old.png", 0},
 	} {
 		t.Run(item.name, func(t *testing.T) {
-			text, urls, err := renderTranscript(item.messages, item.omit, 4)
+			text, urls, err := renderTranscript(item.messages, item.omit, maxAttachments)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -54,7 +54,7 @@ func TestHistoricalImageBoundary(t *testing.T) {
 				if len(urls) != 0 {
 					t.Fatalf("historical images retained: %v", urls)
 				}
-			} else if len(urls) != 1 || !strings.HasSuffix(urls[0], item.wantURLs) || !strings.Contains(text, "[Image 1]") {
+			} else if len(urls) != 1 || !strings.HasSuffix(urls[0].ImageURL, item.wantURLs) || !strings.Contains(text, "[Image 1]") {
 				t.Fatalf("wrong retained images: %v %s", urls, text)
 			}
 			if !strings.Contains(text, "Existing user text") {
@@ -83,7 +83,7 @@ func TestHistoricalImagesStillValidateParts(t *testing.T) {
 		`[{"type":"input_file","file_id":"not-an-image"}]`,
 	} {
 		messages := []message{{Role: "user", Content: json.RawMessage(raw)}, historyText("assistant", "Existing description"), historyText("user", "Follow-up")}
-		if _, _, err := renderTranscript(messages, true, 4); err == nil {
+		if _, _, err := renderTranscript(messages, true, maxAttachments); err == nil {
 			t.Fatalf("accepted malformed omitted image: %s", raw)
 		}
 	}
@@ -91,7 +91,7 @@ func TestHistoricalImagesStillValidateParts(t *testing.T) {
 
 func TestHistoricalImageLimitsApplyToRetainedImages(t *testing.T) {
 	var parts []any
-	for range 5 {
+	for range maxAttachments + 1 {
 		parts = append(parts, map[string]any{"type": "input_image", "image_url": "https://images.example/old.png"})
 	}
 	content, _ := json.Marshal(parts)
@@ -100,15 +100,15 @@ func TestHistoricalImageLimitsApplyToRetainedImages(t *testing.T) {
 	if err := request.prepare(); err != nil {
 		t.Fatalf("raw validation applied the limit before the settings snapshot: %v", err)
 	}
-	if _, _, err := renderTranscript(messages, false, 4); err == nil {
-		t.Fatal("default mode accepted more than four images")
+	if _, _, err := renderTranscript(messages, false, maxAttachments); err == nil {
+		t.Fatal("default mode accepted images above the attachment limit")
 	}
-	text, urls, err := renderTranscript(messages, true, 4)
-	if err != nil || len(urls) != 0 || strings.Count(text, omittedImageText) != 5 {
+	text, urls, err := renderTranscript(messages, true, maxAttachments)
+	if err != nil || len(urls) != 0 || strings.Count(text, omittedImageText) != maxAttachments+1 {
 		t.Fatalf("omitted images consumed the retained-image budget: %v %v", urls, err)
 	}
-	if _, _, err := renderTranscript(messages[:1], true, 4); err == nil {
-		t.Fatal("current images bypassed the four-image limit")
+	if _, _, err := renderTranscript(messages[:1], true, maxAttachments); err == nil {
+		t.Fatal("current images bypassed the attachment limit")
 	}
 }
 

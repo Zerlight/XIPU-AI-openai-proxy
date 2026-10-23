@@ -19,11 +19,12 @@ type toolCall struct {
 	Function functionCall `json:"function"`
 }
 type message struct {
-	Role       string          `json:"role"`
-	Content    json.RawMessage `json:"content"`
-	ToolCalls  []toolCall      `json:"tool_calls,omitempty"`
-	ToolCallID string          `json:"tool_call_id,omitempty"`
-	Name       string          `json:"name,omitempty"`
+	Role        string          `json:"role"`
+	Content     json.RawMessage `json:"content"`
+	ToolCalls   []toolCall      `json:"tool_calls,omitempty"`
+	ToolCallID  string          `json:"tool_call_id,omitempty"`
+	Name        string          `json:"name,omitempty"`
+	contentPath string
 }
 
 func (call *functionCall) UnmarshalJSON(raw []byte) error {
@@ -45,8 +46,10 @@ func (item *message) UnmarshalJSON(raw []byte) error {
 	return nil
 }
 
-func contentParts(raw json.RawMessage, imageURLs *[]string) (string, error) {
-	return renderContentParts(raw, imageURLs, false, 4)
+const maxAttachments = 10
+
+func contentParts(raw json.RawMessage, attachments *[]attachmentInput) (string, error) {
+	return renderContentParts(raw, attachments, false, maxAttachments, "")
 }
 
 const omittedImageText = "[Earlier image omitted; image content is unavailable. Use only the existing text descriptions.]"
@@ -66,7 +69,13 @@ func validateOmittedImageURL(raw string) error {
 	return nil
 }
 
-func renderContentParts(raw json.RawMessage, imageURLs *[]string, omitImages bool, imageLimit int) (string, error) {
+func renderContentParts(raw json.RawMessage, attachments *[]attachmentInput, omitImages bool, attachmentLimit int, contentPath string) (rendered string, err error) {
+	parameter := contentPath
+	defer func() {
+		if parameter != "" {
+			err = atParameter(err, parameter)
+		}
+	}()
 	if len(raw) == 0 || string(raw) == "null" {
 		return "", nil
 	}
@@ -79,7 +88,28 @@ func renderContentParts(raw json.RawMessage, imageURLs *[]string, omitImages boo
 		return "", errors.New("Message content must be text or content parts")
 	}
 	var texts []string
-	for _, raw := range parts {
+	for index, raw := range parts {
+		if contentPath != "" {
+			parameter = fmt.Sprintf("%s[%d]", contentPath, index)
+		}
+		var kind struct {
+			Type string `json:"type"`
+		}
+		if json.Unmarshal(raw, &kind) != nil {
+			return "", errors.New("Invalid message content part")
+		}
+		if kind.Type == "input_file" || kind.Type == "file" {
+			file, err := parseFileInput(raw, kind.Type)
+			if err != nil {
+				return "", err
+			}
+			if attachmentLimit > 0 && len(*attachments) >= attachmentLimit {
+				return "", fmt.Errorf("At most %d attachments are supported", attachmentLimit)
+			}
+			*attachments = append(*attachments, attachmentInput{File: &file, Param: fmt.Sprintf("%s[%d]", contentPath, index)})
+			texts = append(texts, fmt.Sprintf("[File %d: %s]", len(*attachments), file.Name))
+			continue
+		}
 		var part struct {
 			Type     string          `json:"type"`
 			Text     string          `json:"text"`
@@ -118,11 +148,11 @@ func renderContentParts(raw json.RawMessage, imageURLs *[]string, omitImages boo
 				texts = append(texts, omittedImageText)
 				continue
 			}
-			if imageLimit > 0 && len(*imageURLs) >= imageLimit {
-				return "", errors.New("At most 4 images are supported")
+			if attachmentLimit > 0 && len(*attachments) >= attachmentLimit {
+				return "", fmt.Errorf("At most %d attachments are supported", attachmentLimit)
 			}
-			*imageURLs = append(*imageURLs, url)
-			texts = append(texts, fmt.Sprintf("[Image %d]", len(*imageURLs)))
+			*attachments = append(*attachments, attachmentInput{ImageURL: url, Param: fmt.Sprintf("%s[%d]", contentPath, index)})
+			texts = append(texts, fmt.Sprintf("[Image %d]", len(*attachments)))
 		default:
 			return "", errors.New("Unsupported message content type")
 		}
@@ -130,15 +160,15 @@ func renderContentParts(raw json.RawMessage, imageURLs *[]string, omitImages boo
 	return strings.Join(texts, "\n"), nil
 }
 func contentText(raw json.RawMessage) (string, error) {
-	var images []string
-	return contentParts(raw, &images)
+	var attachments []attachmentInput
+	return contentParts(raw, &attachments)
 }
 
-func buildTranscript(messages []message) (string, []string, error) {
-	return renderTranscript(messages, false, 4)
+func buildTranscript(messages []message) (string, []attachmentInput, error) {
+	return renderTranscript(messages, false, maxAttachments)
 }
 
-func renderTranscript(messages []message, omitHistoricalImages bool, imageLimit int) (string, []string, error) {
+func renderTranscript(messages []message, omitHistoricalImages bool, attachmentLimit int) (string, []attachmentInput, error) {
 	omitBefore := -1
 	if omitHistoricalImages {
 		latestUser := -1
@@ -153,7 +183,8 @@ func renderTranscript(messages []message, omitHistoricalImages bool, imageLimit 
 			}
 		}
 	}
-	var blocks, roles, images []string
+	var blocks, roles []string
+	var attachments []attachmentInput
 	pending := map[string]bool{}
 	seen := map[string]bool{}
 	for index, item := range messages {
@@ -169,7 +200,11 @@ func renderTranscript(messages []message, omitHistoricalImages bool, imageLimit 
 		if role != "tool" && len(pending) > 0 {
 			return "", nil, errors.New("Every tool call must have a matching result before the next message")
 		}
-		text, err := renderContentParts(item.Content, &images, index < omitBefore, imageLimit)
+		contentPath := item.contentPath
+		if contentPath == "" {
+			contentPath = fmt.Sprintf("messages[%d].content", index)
+		}
+		text, err := renderContentParts(item.Content, &attachments, index < omitBefore, attachmentLimit, contentPath)
 		if err != nil {
 			return "", nil, err
 		}
@@ -216,12 +251,12 @@ func renderTranscript(messages []message, omitHistoricalImages bool, imageLimit 
 		return "", nil, errors.New("Tool call results are required for stateless replay")
 	}
 	if len(blocks) == 1 && roles[0] == "user" {
-		return blocks[0], images, nil
+		return blocks[0], attachments, nil
 	}
 	for i := range blocks {
 		blocks[i] = "[" + roles[i] + "]\n" + blocks[i]
 	}
-	return strings.Join(blocks, "\n\n"), images, nil
+	return strings.Join(blocks, "\n\n"), attachments, nil
 }
 func transcript(messages []message) (string, error) {
 	text, _, err := buildTranscript(messages)
@@ -260,7 +295,7 @@ type parser struct{ sawContent, sawReasoning bool }
 func (p *parser) parse(raw json.RawMessage) (pieces, error) {
 	var event map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &event); err != nil || event == nil {
-		return pieces{}, errors.New("invalid school event")
+		return pieces{}, invalidSchoolResponse("generation", "invalid school event")
 	}
 	if err := schoolError(event); err != nil {
 		return pieces{}, err
@@ -277,7 +312,7 @@ func (p *parser) parse(raw json.RawMessage) (pieces, error) {
 			Reason string `json:"reason"`
 		}
 		if err := json.Unmarshal(event["data"], &data); err != nil {
-			return pieces{}, errors.New("invalid school result")
+			return pieces{}, invalidSchoolResponse("generation", "invalid school result")
 		}
 		if !p.sawContent {
 			result.content = data.Text
@@ -294,7 +329,7 @@ func (p *parser) parse(raw json.RawMessage) (pieces, error) {
 func models(raw json.RawMessage) (map[string]any, error) {
 	var body map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &body); err != nil || body == nil {
-		return nil, errors.New("invalid model catalog")
+		return nil, invalidSchoolResponse("model_catalog", "invalid model catalog")
 	}
 	if err := schoolError(body); err != nil {
 		return nil, err
@@ -306,7 +341,7 @@ func models(raw json.RawMessage) (map[string]any, error) {
 	}
 	var items []json.RawMessage
 	if json.Unmarshal(itemsRaw, &items) != nil {
-		return nil, errors.New("invalid model catalog")
+		return nil, invalidSchoolResponse("model_catalog", "invalid model catalog")
 	}
 	output := make([]map[string]any, 0, len(items))
 	for _, raw := range items {

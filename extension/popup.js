@@ -4,7 +4,7 @@
     ready: ["Connected", "success", "Keep XIPU AI open and signed in."],
     busy: ["In progress", "info", "A request is running. Keep XIPU AI open."],
     offline: ["Offline", "secondary", "The native app is not connected."],
-    "no-tab": ["Sign in needed", "warning", "The native app is ready. Open XIPU AI and sign in."]
+    "no-tab": ["Sign in needed", "warning", "The native app is ready. Use Setup to open XIPU AI and sign in."]
   };
   const keys = ["bridgeStatus", "bridgeError", "apiKey", "baseURL", "sessionName", "transport", "onboardingComplete", "setupProgress"];
   const element = id => document.getElementById(id);
