@@ -109,4 +109,4 @@ jobs:
           gh release create "$RELEASE_TAG" "$RUNNER_TEMP/release-downloads/"* \
             "${release_flags[@]}" \
             --verify-tag --title "XIPU AI Bridge $RELEASE_TAG" --generate-notes \
-            --notes "Download the archive for your operating system and CPU, extract it, and follow INSTALL.md. The browser extension is installed separately. Native binaries are not Developer ID signed, Apple notarized, or Windows Authenticode signed. See README for installation and platform validation limits."
+            --notes "Download both the native archive for your platform/CPU and \`xipu-bridge-extension.zip\`, extract them, and follow \`INSTALL.md\`. Prebuilt binaries are not Developer ID or Authenticode signed, or Apple notarized; your OS may warn or block execution."

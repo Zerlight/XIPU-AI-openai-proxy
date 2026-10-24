@@ -14,7 +14,7 @@ import (
 
 func main() {
 	if len(os.Args) == 1 || os.Args[1] == "--help" || os.Args[1] == "-h" || os.Args[1] == "help" {
-		fmt.Println("XIPU AI Bridge\n\nUsage:\n  xipu-bridge install [options]\n  xipu-bridge uninstall [options]\n\nThe browser launches the native host automatically after installation.\nUse 'install --help' or 'uninstall --help' for options.")
+		fmt.Println("XIPU AI Bridge\n\nUsage:\n  xipu-bridge install [options]\n  xipu-bridge uninstall [options]\n\nOnce installed, your browser starts the native host automatically.\nRun 'xipu-bridge install --help' or 'xipu-bridge uninstall --help' for available options.")
 		return
 	}
 	if len(os.Args) > 1 && (os.Args[1] == "install" || os.Args[1] == "uninstall") {
@@ -26,7 +26,7 @@ func main() {
 	}
 	args := os.Args[1:]
 	if len(args) == 0 || !strings.HasPrefix(args[0], "chrome-extension://") {
-		fmt.Fprintln(os.Stderr, "Usage: xipu-bridge install|uninstall [options]\nThe browser launches the native host with its registered extension origin.")
+		fmt.Fprintln(os.Stderr, "Usage: xipu-bridge install|uninstall [options]\nThe browser starts the native host automatically with its registered extension origin.")
 		os.Exit(2)
 	}
 	dir, err := config.ConfigDir()

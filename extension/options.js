@@ -176,7 +176,7 @@
       message("notice", "Settings saved.");
       noticeTimer = setTimeout(() => message("notice", ""), 10000);
     } catch (error) {
-      message("error", error.message || "Could not save settings. Your changes are still in the form.");
+      message("error", error.message || "Could not save settings. Your edits are still in the form.");
     } finally { finishOperation(); }
   }
 
@@ -186,7 +186,7 @@
     updateControls();
     try {
       await BridgeUI.request("reconnect");
-      message("notice", "Reconnecting. Saved settings will apply when the native app starts.", "info");
+      message("notice", "Reconnecting… Saved settings will take effect once the native host restarts.", "info");
     } catch (error) { message("error", error.message || "Could not reconnect."); }
     finally { finishOperation(); }
   }
@@ -229,8 +229,9 @@
         element("model-catalog").appendChild(option);
       }
       element("discovery-results").hidden = false;
-      element("discovery-info").textContent = `${sessions.filter(session => session.safe).length} usable sessions. Duplicate names and nonzero context counts cannot be selected. Using a session fills its name and default model in this form; your client can choose another model.`;
-      message("notice", "Sessions and models loaded. No school conversation was changed.");
+      const usableCount = sessions.filter(session => session.safe).length;
+      element("discovery-info").textContent = `${usableCount} usable ${usableCount === 1 ? "session" : "sessions"} found. Sessions with duplicate names or non-zero Context Count cannot be selected. Clicking Use session fills the form above; click Save changes to apply.`;
+      message("notice", "Loaded sessions and models from XIPU AI.");
     } catch (error) { message("error", error.message || "Could not read XIPU AI sessions."); }
     finally { finishOperation(); }
   }
@@ -246,7 +247,7 @@
       element("api-key").value = response.apiKey;
       element("rotate-confirm").hidden = true;
       message("error", "");
-      message("notice", "API key replaced. Copy the new key into every client.");
+      message("notice", "API key replaced. Update your connected clients with the new key.");
     } catch (error) { message("error", error.message || "Could not replace the API key."); }
     finally { finishOperation(); element("rotate-key").focus(); }
   }
@@ -254,7 +255,7 @@
   async function copy(id, label) {
     if (!element(id).value) return;
     try { await navigator.clipboard.writeText(element(id).value); message("notice", `${label} copied.`); }
-    catch { message("error", id === "api-key" ? "Copy failed. Show the key, select it, and copy manually." : "Copy failed. Select the URL and copy it manually."); }
+    catch { message("error", id === "api-key" ? "Copy failed. Reveal the key and copy it manually." : "Copy failed. Select the URL and copy it manually."); }
   }
 
   const compactNavigation = matchMedia("(max-width: 700px)");
@@ -283,7 +284,7 @@
   element("settings-form").addEventListener("submit", save);
   element("settings-form").addEventListener("input", markDirty);
   element("reload").addEventListener("click", () => loadSettings(true));
-  element("reset").addEventListener("click", () => { if (!loaded || pending || status === "offline") return; setForm(defaults); markDirty(); message("notice", "Defaults loaded in the form. Save changes to apply them.", "info"); });
+  element("reset").addEventListener("click", () => { if (!loaded || pending || status === "offline") return; setForm(defaults); markDirty(); message("notice", "Default values loaded into the form. Save changes to apply them.", "info"); });
   element("reconnect").addEventListener("click", reconnect);
   element("restart-now").addEventListener("click", reconnect);
   element("inspect").addEventListener("click", inspect);
@@ -294,7 +295,7 @@
     element("session_name").value = session.name;
     element("default_model").value = session.model;
     markDirty();
-    message("notice", "Session details added to the form. Save changes to apply them.", "info");
+    message("notice", "Session details filled in the form. Save changes to apply them.", "info");
   });
   element("show-key").addEventListener("click", () => {
     setKeyVisible(element("api-key").type !== "text");

@@ -89,16 +89,14 @@ const usage = `Usage:
   xipu-bridge uninstall [--browser chrome|edge|chromium|brave]
       [--native-host-dir DIRECTORY] [--dry-run]
 
-Install copies this executable and registers a per-user Native Messaging host.
-The default extension ID is ` + officialExtensionID + `.
-Use --extension-id to register a custom build instead.
-Existing settings and API key are preserved unless explicitly changed.
-The default session is "XIPU AI Bridge".
-Uninstall removes the selected browser registration; shared files are preserved.
-Dry-run does not write files or invoke registry commands.
-Brave registration is supported on Linux.
-On Linux and macOS, --native-host-dir selects an absolute manifest directory.
-Use the same directory when upgrading or uninstalling. It does not move host settings.
+Install copies this binary into your user config directory and registers the Native Messaging host.
+The default extension ID is ` + officialExtensionID + ` (pass --extension-id for custom builds).
+Existing settings are preserved unless overridden with --session-name or --port. Your local API key is preserved.
+The default session name is "XIPU AI Bridge".
+Uninstall removes the Native Messaging registration for the selected browser while keeping shared config and keys.
+Pass --dry-run to preview changes without writing files or modifying the Windows registry.
+Brave is supported on Linux (--browser brave).
+On Linux and macOS, --native-host-dir sets an explicit NativeMessagingHosts directory (use the same path when upgrading or uninstalling).
 `
 
 func parse(args []string) (options, error) {
@@ -115,7 +113,7 @@ func parse(args []string) (options, error) {
 	if o.action == "install" {
 		defaults := config.Defaults()
 		fs.StringVar(&o.id, "extension-id", officialExtensionID, "32-character extension ID for a custom build")
-		fs.StringVar(&o.session, "session-name", defaults.SessionName, "dedicated school conversation")
+		fs.StringVar(&o.session, "session-name", defaults.SessionName, "dedicated XIPU AI conversation name")
 		fs.IntVar(&o.port, "port", defaults.Port, "local API port")
 	}
 	if err := fs.Parse(args[1:]); err != nil {
@@ -262,7 +260,7 @@ func execute(o options, env environment) error {
 			return fmt.Errorf("register native host: %w", err)
 		}
 	}
-	fmt.Fprintf(env.output, "Installed %s\nRegistered %s for %s\nManifest: %s\nOpen the extension popup and connect. Keep a school chat tab signed in.\n", p.binary, hostName, o.browser, p.manifest)
+	fmt.Fprintf(env.output, "Installed %s\nRegistered %s for %s\nManifest: %s\nNext: open the XIPU AI Bridge extension in your browser to finish setup.\n", p.binary, hostName, o.browser, p.manifest)
 	return nil
 }
 

@@ -1,40 +1,37 @@
-# coss ui adaptation
+# coss-ui style adaptation
 
-The popup and settings page adapt the official coss ui component styles. Semantic HTML, local JavaScript, and checked-in CSS provide the controls and their interaction states. The tables below identify the source components and the adaptations maintained in this repository.
+The extension popup, setup guide, and settings page use component styles adapted from [coss-ui](https://coss.com/ui), paired with semantic HTML, plain JavaScript, and standalone CSS. The tables below list the upstream primitives and how they were adapted for this repository.
 
 ## Source snapshot
 
-Component styles are adapted from cosscom/coss commit [`e937becd2d5ffb5c621eed6f8b1f223cbb6051e7`](https://github.com/cosscom/coss/tree/e937becd2d5ffb5c621eed6f8b1f223cbb6051e7). Only the MIT-licensed `apps/ui` sources were adapted. The upstream [licensing declaration](https://github.com/cosscom/coss/blob/e937becd2d5ffb5c621eed6f8b1f223cbb6051e7/LICENSING.md) explicitly identifies that directory as MIT. No `packages/ui` implementation is included.
+Component styles are based on `cosscom/coss` commit [`e937becd2d5ffb5c621eed6f8b1f223cbb6051e7`](https://github.com/cosscom/coss/tree/e937becd2d5ffb5c621eed6f8b1f223cbb6051e7). Only files from the MIT-licensed `apps/ui` directory were used (per the upstream [licensing declaration](https://github.com/cosscom/coss/blob/e937becd2d5ffb5c621eed6f8b1f223cbb6051e7/LICENSING.md)); no code from `packages/ui` is included.
 
-| Local primitive | Pinned upstream source | Adapted behavior and styles |
+| Local primitive | Upstream source | Adapted behavior and styles |
 | --- | --- | --- |
-| Button | [button.tsx](https://github.com/cosscom/coss/blob/e937becd2d5ffb5c621eed6f8b1f223cbb6051e7/apps/ui/registry/default/ui/button.tsx) | Default and outline variants, default and icon sizes, inset edge, shadow, hover/pressed/disabled states, focus ring, touch target |
-| Input | [input.tsx](https://github.com/cosscom/coss/blob/e937becd2d5ffb5c621eed6f8b1f223cbb6051e7/apps/ui/registry/default/ui/input.tsx) | Native input branch, surrounding control, border and edge shadow, focus-within ring, default size |
-| Card | [card.tsx](https://github.com/cosscom/coss/blob/e937becd2d5ffb5c621eed6f8b1f223cbb6051e7/apps/ui/registry/default/ui/card.tsx) | Card root, rounded border, background clipping, shallow shadow and inset edge |
-| Badge | [badge.tsx](https://github.com/cosscom/coss/blob/e937becd2d5ffb5c621eed6f8b1f223cbb6051e7/apps/ui/registry/default/ui/badge.tsx) | Secondary, success, info, warning variants; default size |
-| Alert | [alert.tsx](https://github.com/cosscom/coss/blob/e937becd2d5ffb5c621eed6f8b1f223cbb6051e7/apps/ui/registry/default/ui/alert.tsx) | Default, error, info, success, and warning variants; border, background, spacing, radius, optional icon, title, description, and responsive action slots |
-| Switch | [switch.tsx](https://github.com/cosscom/coss/blob/e937becd2d5ffb5c621eed6f8b1f223cbb6051e7/apps/ui/registry/default/ui/switch.tsx) | Responsive track/thumb sizes, primary checked track, background-colored thumb, checked translation, pressed stretch, disabled opacity, focus ring and transitions |
-| Select | [select.tsx](https://github.com/cosscom/coss/blob/e937becd2d5ffb5c621eed6f8b1f223cbb6051e7/apps/ui/registry/default/ui/select.tsx) | Default trigger size, border and inset edge, focus/error states, value truncation, popup surface and padding, item grid, selected indicator, highlighted and disabled states |
+| Button | [button.tsx](https://github.com/cosscom/coss/blob/e937becd2d5ffb5c621eed6f8b1f223cbb6051e7/apps/ui/registry/default/ui/button.tsx) | Default and outline variants, default and icon sizes, inset borders, shadows, hover/active/disabled states, focus ring, and touch targets |
+| Input | [input.tsx](https://github.com/cosscom/coss/blob/e937becd2d5ffb5c621eed6f8b1f223cbb6051e7/apps/ui/registry/default/ui/input.tsx) | Native input wrapper, border and inset shadow, `focus-within` ring, and default sizing |
+| Card | [card.tsx](https://github.com/cosscom/coss/blob/e937becd2d5ffb5c621eed6f8b1f223cbb6051e7/apps/ui/registry/default/ui/card.tsx) | Card container, rounded border, background clipping, subtle shadow, and inset border |
+| Badge | [badge.tsx](https://github.com/cosscom/coss/blob/e937becd2d5ffb5c621eed6f8b1f223cbb6051e7/apps/ui/registry/default/ui/badge.tsx) | Secondary, success, info, and warning variants at default size |
+| Alert | [alert.tsx](https://github.com/cosscom/coss/blob/e937becd2d5ffb5c621eed6f8b1f223cbb6051e7/apps/ui/registry/default/ui/alert.tsx) | Default, error, info, success, and warning variants; optional icon, title, description, and responsive action slots |
+| Switch | [switch.tsx](https://github.com/cosscom/coss/blob/e937becd2d5ffb5c621eed6f8b1f223cbb6051e7/apps/ui/registry/default/ui/switch.tsx) | Responsive track and thumb sizing, checked translation, active press stretch, disabled opacity, focus ring, and transitions |
+| Select | [select.tsx](https://github.com/cosscom/coss/blob/e937becd2d5ffb5c621eed6f8b1f223cbb6051e7/apps/ui/registry/default/ui/select.tsx) | Trigger sizing, border and focus/error states, label truncation, dropdown surface, option grid, check indicator, and highlighted/disabled states |
 
-Switch uses a labelled native checkbox with `role="switch"`; its track is 38×22 px with a 20 px thumb, changing to 30×18 px with a 16 px thumb at the upstream 640 px breakpoint. Select uses a button combobox and a separate listbox. Local JavaScript manages keyboard navigation, selection, focus, and viewport placement. Its popup combines the upstream surface and list into one scrollable element; native scrolling replaces the upstream scroll-arrow controls. The trigger is at least 36 px high, changing to 32 px at 640 px; items change from 32 px to 28 px. Forced-color styles use system colors, and reduced-motion preferences disable transitions.
+- **Switch** wraps a native `<input type="checkbox" role="switch">`. The track measures 38×22 px (20 px thumb) on mobile viewports and scales down to 30×18 px (16 px thumb) at the 640 px breakpoint.
+- **Select** pairs a `<button role="combobox">` trigger with a `<div role="listbox">` menu. `extension/ui-controls.js` handles keyboard navigation, typeahead, focus management, and viewport clamping. The dropdown merges the upstream surface and list into a single natively scrollable container instead of using scroll-arrow buttons. Triggers are 36 px tall (32 px at `>=640px`), and option rows are 32 px tall (28 px at `>=640px`).
+- **Alert** follows the [upstream slot layout](https://coss.com/ui/docs/components/alert) (`alert-title`, `alert-description`, and `alert-action`, plus an optional leading SVG icon). Action buttons sit inline at `>=640px` and stack below the message on narrower viewports, while simple single-line alerts remain single-column. Status notices use `role="status"` and errors use `role="alert"`.
+- **Theme tokens** follow the [coss styling specification](https://coss.com/ui/docs/styling.md), with light/dark neutral palettes, alpha borders, semantic colors, border radii, and shadows compiled directly to OKLCH values in CSS. System font stacks are used throughout so the extension makes no external font requests.
+- **Frame** is adapted from the [`apps/ui` Frame component](https://github.com/cosscom/coss/blob/main/apps/ui/registry/default/ui/frame.tsx) (`main` branch). It retains the 72% muted outer shell, 4 px inset and panel spacing, panel borders, radius tokens, and `frame` / `frame-panel` / `frame-panel-header` / `frame-panel-title` / `frame-panel-description` `data-slot` attributes.
 
-Alert follows the [official component structure](https://coss.com/ui/docs/components/alert), preserving the `alert-title`, `alert-description`, and `alert-action` slots with an optional direct SVG child. Actions sit beside the message from 640 px and below it on smaller screens; the text column can shrink and descriptions wrap long messages. Existing plain-text alerts keep a single-column layout. Local feedback uses `role="status"` for routine updates and `role="alert"` for errors.
+## Local customizations
 
-Theme tokens follow the official [coss styling documentation](https://coss.com/ui/docs/styling.md). Its light/dark neutral palette, alpha borders, semantic colors, radius scale, and shadow treatment are expanded into browser-ready CSS. Palette variables are resolved to their corresponding OKLCH values. The font uses the documented system fallback to avoid external font requests.
+- Tailwind utility classes from the upstream React components were hand-translated into plain CSS in `extension/styles/coss.css`, which serves as the single source of truth (no CSS build step required).
+- Upstream `data-slot` names are kept intact, supplemented by `select-item-text` and `select-item-indicator` for the custom Select widget. Only variants actually used by the extension are included.
+- Dark mode follows `prefers-color-scheme` by default and can be overridden via `data-theme="light|dark"` on `<html>`. Both Forced Colors (`forced-colors: active`) and Reduced Motion (`prefers-reduced-motion: reduce`) are supported.
+- Page-specific layout and typography live in `popup.css`, `options.css`, and `setup.css`, while shared component tokens and states stay in `coss.css`.
+- Connection endpoints and API keys use a monospace font stack, icon-only buttons include `aria-label` and `title` attributes, and inline SVGs are used for icons and indicators.
 
-The settings layout adapts [Frame](https://coss.com/ui/docs/components/frame) from the official [`apps/ui` Frame source](https://github.com/cosscom/coss/blob/main/apps/ui/registry/default/ui/frame.tsx). Frame is referenced from `main`; no immutable revision is recorded for this component. The adaptation preserves its muted 72% shell, 4px inset and panel spacing, panel borders and inset edges, radius tokens, and exact `frame` / `frame-panel` / `frame-panel-header` / `frame-panel-title` / `frame-panel-description` slot names. This is a static layout primitive, with no animation dependency. Setting rows customize content spacing; native tab buttons provide keyboard navigation between General, Connection, Advanced, and Appearance. Setup is a separate navigation action that opens a new tab.
+These adapted styles are maintained by this project without upstream endorsement, and the MIT license notice is bundled at `styles/LICENSE.coss.txt`.
 
-## Deliberate adaptations
+## Updating styles
 
-- Utility declarations are expanded by hand into ordinary CSS in `extension/styles/coss.css`; this is the source of truth, not an output requiring regeneration.
-- Component `data-slot` names are preserved, with local slots for the Select item text and indicator. Only variants used by the popup and settings page are included.
-- Dark mode follows the operating system via `prefers-color-scheme` by default. The settings page can persist a light or dark override, shared with the popup through `data-theme`. Reduced motion is respected.
-- `extension/styles/popup.css` and `extension/styles/options.css` contain page layout and typography adjustments. Component colors, borders, radii, and focus treatments remain in the shared stylesheet.
-- Input content uses a monospace system font for connection values. Labels, feedback, and status text are accessible; icon-only controls have names.
-- The popup's arrow, copy, eye, and reconnect icons use original inline SVG geometry. Select uses inline chevrons and a selected-item check indicator.
-
-The adapted styles are maintained by this project without upstream endorsement. The MIT notice is shipped with the extension in `styles/LICENSE.coss.txt`.
-
-## Updating
-
-Review the listed MIT component files and styling documentation at a new pinned commit. Apply the declarations used by the popup and settings page, update this document, and run the JavaScript tests. Visually inspect both light and dark themes, including keyboard focus, open Select popups, checked and unchecked switches, unavailable native host, absent tab, running request, long error text, and clipboard failure.
+To pull in upstream design updates, compare the component sources and styling docs at the new commit against `extension/styles/coss.css`, update this file, and run the test suite (`devenv shell -- bridge-check`). Visually verify both light and dark themes across `popup-preview.cjs` and `options-preview.cjs`, checking keyboard focus rings, open Select menus, switches, offline/busy states, and long error messages.

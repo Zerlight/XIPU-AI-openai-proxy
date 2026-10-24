@@ -111,7 +111,7 @@ test("connected tab alone is not setup complete and has no implicit school reque
 test("sign-in guidance opens the modern chat frontend", async () => {
   const ui = mount({ status: "no-tab" }); await tick();
   assert.equal(ui.get("connection-panel").hidden, false);
-  assert.match(ui.get("connection-detail").textContent, /Open XIPU AI below and sign in/);
+  assert.match(ui.get("connection-detail").textContent, /Open .*XIPU AI.* and sign in/);
   const schoolLinks = [...html.matchAll(/href="(https:\/\/xipuai[^"]+)"/g)].map(([, href]) => href);
   assert.deepEqual(schoolLinks, ["https://xipuai-xjtlu-edu-cn-s.xjtlu.edu.cn/chat"]);
 });

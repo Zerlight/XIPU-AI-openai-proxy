@@ -1,51 +1,26 @@
 # Install XIPU AI Bridge
 
-No additional language runtime is required. Installation is for your user
-account; do not run the installer with `sudo` or as Administrator.
+The native host is a self-contained binary with no external runtime dependencies. It installs under your user account—do not run the installer with `sudo` or as Administrator.
 
-1. Download the native package for your operating system and CPU, plus
-   `xipu-bridge-extension.zip`, from
-   [GitHub Releases](https://github.com/Zerlight/XIPU-AI-openai-proxy/releases).
-   Choose `arm64` for Apple silicon/ARM64, or `amd64` for Intel/AMD x86-64.
-   Extract both archives completely. Keep the extension folder in a permanent
-   location.
-2. Run the native installer from its extracted folder:
-   - macOS: double-click `Install.command`.
-   - Windows: double-click `Install.cmd`.
-   - Linux: open a terminal in this folder and run `bash install.sh`.
-3. In Chrome, open `chrome://extensions` and enable **Developer mode**. Click
-   **Load unpacked** and select the extracted extension folder containing
-   `manifest.json`. Keep that folder in place.
-4. Click **XIPU AI Bridge** in Chrome's toolbar or Extensions menu. Choose
-   **Start setup** on the welcome screen to open the guide in a new tab.
-   Sign in to XIPU AI and refresh the tab,
-   then load the available models. Choose a model and a unique conversation name
-   and click **Create bridge session**. Setup configures and verifies the new
-   conversation and saves your local settings without generating a response.
-5. Copy the base URL and API key into your client. Choose any available model;
-   the bridge updates the school conversation automatically. Keep the XIPU AI
-   tab signed in. You can reopen Setup from the dashboard or Settings.
+1. Download the native package for your operating system and CPU architecture, along with `xipu-bridge-extension.zip`, from [GitHub Releases](https://github.com/Zerlight/XIPU-AI-openai-proxy/releases). Choose `arm64` for Apple silicon / ARM64 devices, or `amd64` for 64-bit Intel / AMD devices. Extract both archives and move the extension folder to a permanent location.
+2. Run the installer inside the extracted native package folder:
+   - **macOS:** Double-click `Install.command`.
+   - **Windows:** Double-click `Install.cmd`.
+   - **Linux:** Open a terminal in the folder and run `bash install.sh`.
+3. In Chrome, open `chrome://extensions` and turn on **Developer mode**. Click **Load unpacked** and select the extracted extension folder containing `manifest.json`. Keep that folder in place.
+4. Click **XIPU AI Bridge** in the browser toolbar and choose **Start setup** to open the setup guide. Sign in to XIPU AI, refresh the chat tab, and click **Load models**. Pick an initial model and a unique conversation name, then click **Create bridge session**. Setup creates and verifies the dedicated conversation and saves your local settings without sending any test prompts.
+5. Copy the **Base URL** and **API key** into your client. You can select any available model directly in your client, and the bridge will switch the conversation's model automatically. Keep the XIPU AI tab open and signed in while making requests.
 
-For a previously configured connection, choose **Use existing setup** on the
-welcome screen to open the dashboard. To select an existing dedicated
-conversation, open Settings and use **Load from XIPU AI → Use session → Save
-changes**.
+If you have already configured a session on this computer, click **Use existing setup** on the welcome screen to go straight to the dashboard. To use an existing conversation instead of creating a new one, open Settings and choose **Load from XIPU AI → Use session → Save changes**.
 
-Model changes persist, including after a failed or cancelled request. Do not
-manually edit or send messages in the dedicated conversation while a request
-is active.
+Model changes in the dedicated conversation persist across requests (including after a failed or cancelled request). Avoid manually editing or sending messages in that conversation while an API request is running.
 
-The native binaries are unsigned, so your operating system may warn or block
-execution. Follow its normal security controls.
+Prebuilt binaries are not Developer ID or Authenticode signed, or Apple notarized. Your operating system may warn or block execution; follow its normal security controls.
 
-For Linux Chromium or Brave, select the browser explicitly:
+On Linux, Chromium and Brave users should specify their browser when installing:
 `bash install.sh --browser chromium` or `bash install.sh --browser brave`.
-Use `--dry-run` to inspect registration paths without changing files. Custom
-Linux/macOS configurations can use `--native-host-dir /absolute/directory` to
-select the browser's NativeMessagingHosts directory. Use the same option for
-upgrades and uninstalling.
+Pass `--dry-run` to preview the target paths without modifying any files. For custom browser profile locations on Linux or macOS, pass `--native-host-dir /absolute/path/to/NativeMessagingHosts` (and use the same flag when upgrading or uninstalling).
 
-For other browsers, upgrades, configuration, and troubleshooting, see the
-[reference guide](https://github.com/Zerlight/XIPU-AI-openai-proxy/blob/main/docs/reference.md).
+For Edge setup, upgrades, advanced settings, and troubleshooting, see the [reference guide](https://github.com/Zerlight/XIPU-AI-openai-proxy/blob/main/docs/reference.md).
 
-See the included `LICENSE`, `THIRD_PARTY_NOTICES.md`, and `licenses/` for terms.
+See `LICENSE`, `THIRD_PARTY_NOTICES.md`, and `licenses/` for licensing details.

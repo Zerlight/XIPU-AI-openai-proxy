@@ -19,20 +19,20 @@
       </button>
     </header>
 
-    <p id="loading" class="description loading" role="status">Loading your connection…</p>
+    <p id="loading" class="description loading" role="status">Loading connection status…</p>
     <section id="welcome" class="welcome" aria-labelledby="welcome-title" hidden>
-      <div class="welcome-intro"><h2 id="welcome-title">Welcome</h2><p id="welcome-description" class="description">Set up XIPU AI Bridge for your OpenAI-compatible client.</p></div>
+      <div class="welcome-intro"><h2 id="welcome-title">Welcome</h2><p id="welcome-description" class="description">Use XIPU AI with your local OpenAI-compatible apps.</p></div>
       <div data-slot="frame"><div data-slot="frame-panel" class="welcome-guide">
         <ol class="welcome-steps">
-          <li><span class="step-number" aria-hidden="true">1</span><div><h3>Connect XIPU AI</h3><p class="description">Install the native app and sign in to XIPU AI.</p></div></li>
-          <li><span class="step-number" aria-hidden="true">2</span><div><h3>Create a bridge session</h3><p class="description">A dedicated conversation for your client.</p></div></li>
-          <li><span class="step-number" aria-hidden="true">3</span><div><h3>Add your client</h3><p class="description">Copy your local URL and API key.</p></div></li>
+          <li><span class="step-number" aria-hidden="true">1</span><div><h3>Connect XIPU AI</h3><p class="description">Install the native host and sign in to XIPU AI chat.</p></div></li>
+          <li><span class="step-number" aria-hidden="true">2</span><div><h3>Create a bridge session</h3><p class="description">Set up a dedicated conversation for API requests.</p></div></li>
+          <li><span class="step-number" aria-hidden="true">3</span><div><h3>Connect your client</h3><p class="description">Copy your local Base URL and API key.</p></div></li>
         </ol>
       </div></div>
       <div id="welcome-error" data-slot="alert" data-variant="error" role="alert" hidden></div>
       <div class="welcome-actions"><button id="start-setup" data-slot="button" type="button">Start setup</button><button id="skip-setup" data-slot="button" data-variant="outline" type="button" disabled>Use existing setup</button><button id="welcome-retry" data-slot="button" data-variant="outline" type="button" hidden>Try again</button></div>
-      <p id="welcome-status" class="description" role="status" aria-live="polite">Setup opens in a new tab. Already configured? Use your existing setup to view the connection.</p>
-      <p class="privacy-note">Your school token stays in the browser.</p>
+      <p id="welcome-status" class="description" role="status" aria-live="polite">Setup opens in a new tab. Already set up on this computer? Choose Use existing setup.</p>
+      <p class="privacy-note">Your XIPU AI credentials stay in the browser.</p>
     </section>
 
     <div id="dashboard" class="dashboard" hidden>
@@ -46,7 +46,7 @@
           Reconnect
           </button>
         </div>
-        <p id="status-detail" class="description">Reading bridge status…</p>
+        <p id="status-detail" class="description">Checking bridge status…</p>
         <div id="error" data-slot="alert" data-variant="error" role="alert" hidden></div>
       </div>
     </section>
@@ -82,7 +82,7 @@
     <section class="session" aria-labelledby="session-heading">
       <div class="section-heading"><h2 id="session-heading">Dedicated session</h2><button id="setup" data-slot="button" data-variant="outline" type="button">Setup</button></div>
       <p id="session">Waiting for the native app</p>
-      <p class="description">Models switch to your client’s choice. Reserve this session for the bridge and keep context count at 0.</p>
+      <p class="description">The model switches automatically to match your client. Keep this session reserved for the bridge with Context Count at 0.</p>
     </section>
 
     <footer>
@@ -90,7 +90,7 @@
         <summary>Connection details</summary>
         <dl><dt>Transport</dt><dd id="transport">Native Messaging</dd><dt>Extension ID</dt><dd><code id="extension-id"></code></dd></dl>
       </details>
-      <p class="privacy-note">Your school token stays in the browser.</p>
+      <p class="privacy-note">Your XIPU AI credentials stay in the browser.</p>
     </footer>
     </div>
   </main>

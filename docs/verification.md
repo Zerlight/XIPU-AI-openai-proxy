@@ -1,6 +1,6 @@
 # Testing and verification
 
-Run the repository checks in the pinned development environment:
+Run the full test and verification suite inside the pinned development shell:
 
 ```sh
 devenv shell -- bridge-check
@@ -9,54 +9,53 @@ devenv shell -- bridge-release
 devenv shell -- bash packaging/check.sh
 ```
 
-## Automated coverage
+## Automated test coverage
 
-| Area | Coverage |
+| Area | What is tested |
 | --- | --- |
-| Go | Formatting, vet, unit tests, and the race detector on macOS/Linux |
-| HTTP and streaming | Authentication, loopback checks, Chat Completions and Responses JSON/SSE, optional school completion markers, clean EOF, incomplete frames, read failures, cancellation, and timeouts |
-| Client compatibility | Accepted token-limit fields, invalid and conflicting values, ignored-parameter headers, unknown usage, and CORS header access |
-| Native Messaging | Framing, bounded chunk assembly, ordering, disconnects, reconnect without replay, and clean shutdown |
-| Extension integration | A real Go subprocess connected through background, isolated content, and page scripts using a synthetic school API |
-| School request boundaries | Automatic model updates preserving other settings, saved model/session-ID verification, Context Count 0, unchanged compatibility prompts, no automatic retries, and school-token containment |
-| First-run setup | Explicit creation, paced configuration, verified isolation settings, persistent progress, read-only recovery after HTTP 502, cancellation and late-reply handling, manual settings recovery, and no generation during setup |
-| Images | PNG/JPEG/GIF/WebP validation, size limits, safe public HTTPS retrieval, multipart upload, typed capability errors before generation, opt-in answered-history omission, and current-image protection |
-| Files | Responses `input_file`, Chat Completions `file`, PDF/UTF-8 text validation, bounded public HTTPS downloads, mixed attachment ordering, retained document history, legacy frontend rejection, and stopping after partial upload failure |
-| Tools and structured output | Function-call round trips, call-ID matching, argument validation, JSON Schema output, bounded schema processing, and blocked external resources |
-| Settings and UI | Validated drafts, persistence failures, busy/offline states, key rotation, theme changes, clipboard errors, select keyboard behavior, and focus handling |
-| School frontends | Separate `/chat` and `/v3/chat` login stores, model catalogs and generation payloads; dedicated-session checks; limits of 10 attachments on `/chat` and one image on `/v3/chat` before school requests; rejection of non-chat routes; native-host integration for both protocols |
-| Installation and packaging | OS/browser registration layouts, Linux Brave paths, Chromium environment precedence, custom manifest directories, symlink protection, configuration preservation, argument quoting, launcher exit status, archive contents, permissions, checksums, and extension identity |
+| Go host | `gofmt`, `go vet`, unit tests, and the race detector on macOS and Linux |
+| HTTP & streaming | Bearer authentication, loopback host enforcement, Chat Completions and Responses JSON/SSE formatting, optional `[DONE]` markers, clean EOF handling, truncated SSE frames, stream read errors, client disconnects, and timeouts |
+| Client compatibility | Accepted token-limit parameters (`max_tokens`, `max_completion_tokens`, `max_output_tokens`), invalid/conflicting values, `X-XIPU-Ignored-Parameters` and `X-XIPU-Usage` headers, `usage: null` chunks, and CORS preflight/exposed headers |
+| Native Messaging | Length-prefixed framing, 256 KiB chunks with a 24 MiB reassembly limit, out-of-order/oversized chunk rejection, host disconnects, reconnects without replaying in-flight requests, and clean shutdown |
+| End-to-end extension bridge | A real Go host subprocess communicating through the background service worker, isolated content script, and main-world page script against a mock XIPU AI server |
+| Session & model safety | Automatic model switching without clobbering unrelated session fields, post-update session ID and Context Count 0 verification, prompt preservation, no automatic retries, and keeping the XIPU AI token inside the browser |
+| First-run setup | Explicit session creation, 3-second pacing before configuration, Context Count 0 and empty prompt verification, persisted progress across interruptions, read-only recovery after HTTP 502, user cancellation, and manual fallback via Settings |
+| Image inputs | PNG/JPEG/GIF/WebP header and raster decoding, size/dimension limits, SSRF-safe public HTTPS downloads, multipart uploads, pre-flight multimodal capability checks, and optional omission of earlier answered images |
+| Document inputs | Responses `input_file` and Chat Completions `file` parts, PDF signature and UTF-8 text validation, public HTTPS file downloads, mixed image/document ordering, `/chat` frontend enforcement, and halting on the first failed upload |
+| Tools & structured output | Prompt-based function call round trips, call-ID matching, JSON Schema argument validation, `json_object` and `json_schema` output validation, complexity bounds, and blocking external schema URLs |
+| Extension UI | Form validation, save failures, offline/busy state locking, API key masking and rotation, theme persistence and rollback, clipboard fallbacks, and accessible combobox keyboard navigation |
+| XIPU AI frontends | Separate `/chat` and `/v3/chat` token stores, model catalog and completion endpoints, 10-attachment (`/chat`) vs. 1-image (`/v3/chat`) limits, non-chat URL rejection, and legacy webpage send flow checks |
+| Installer & packaging | Per-OS Native Messaging manifest paths, Linux Brave and Chromium env-var precedence, custom `--native-host-dir` lifecycle, symlink protection, config/key preservation across upgrades, launcher argument forwarding, archive contents, file permissions, and SHA-256 checksums |
 
-Fixtures use synthetic credentials, sessions, model names, and responses. The automated suite does not require a school login or make live generation requests.
+All automated tests run offline against synthetic credentials, sessions, and mocked responses—no live XIPU AI account is needed.
 
-The CI workflow runs checks on macOS, Linux, and Windows. Release builds target ARM64 and x86-64 on each platform. Tagged releases are published only after the required jobs pass and the tag matches the extension version.
+GitHub Actions runs the suite on macOS, Linux, and Windows, cross-compiles release archives for ARM64 and x86-64, and publishes tagged releases only when all checks pass and the Git tag matches `extension/manifest.json`.
 
-## Verification limits
+## Scope and limitations of automated tests
 
-- Synthetic integration tests cannot establish compatibility with changes to the live school service. Browser startup, authentication, proxy behavior, model updates, and model capabilities need separate end-to-end verification. Session verification cannot prevent a concurrent edit from another client or the school interface.
-- Cross-compilation and installer tests do not establish browser-level support on every OS, architecture, or browser distribution. Snap and Flatpak installations may require additional native-host integration.
-- Download quarantine, OS trust prompts, signing, and notarization are outside unit-test coverage. Native packages are unsigned.
-- UI fixtures simulate browser extension APIs. They do not verify browser-store installation or native-host registration.
-- Successful image transport does not establish a model's visual accuracy. Prompt-based tools and structured output do not provide school-native function calling or constrained decoding.
-- Live `/chat` image checks cover a single image through Responses and two ordered images through Chat Completions with an image-capable model. The official chat uploader's 10-attachment limit was checked on 2026-10-24; generation with all ten attachments remains unverified. File-picker limits do not establish server capacity.
-- SSE event validation does not establish time-to-first-token or delivery latency. Accepted token-limit fields do not enforce generation or spending limits; token usage remains unavailable.
-- Only one browser/profile can bind the configured API port. Settings replacement uses Go's `os.Rename`, which does not guarantee atomic replacement on Windows.
+- **Upstream API changes:** Mocked integration tests verify the bridge's contract against known XIPU AI `/chat` and `/v3/chat` behavior, but cannot catch unannounced changes to the live university service, login flow, or campus proxy.
+- **Browser packaging:** Cross-compilation and manifest path tests do not replace testing inside actual browser installations, especially for sandboxed Linux packages (Snap or Flatpak) that restrict host filesystem access.
+- **OS security prompts:** Prebuilt binaries are unsigned and unnotarized, so macOS Gatekeeper and Windows SmartScreen behavior must be handled at the OS level.
+- **Model behavior:** Validating file uploads, image transport, or prompt-based tool/schema envelopes only guarantees that the bridge sent and checked the payload—how accurately a specific model interprets an image, PDF, or tool definition depends on the upstream model and XIPU AI's backend pipeline.
+- **Single-instance port binding:** Only one browser profile can bind the configured local TCP port at a time. On Windows, config file updates use `os.Rename`, which is not guaranteed to be strictly atomic across concurrent processes.
 
-See the [API reference](reference.md#api) and [platform limits](reference.md#platforms-and-release-limits) for supported behavior.
+See the [API reference](reference.md#api) and [platform notes](reference.md#platforms-and-release-limits) for full operational details.
 
-## Live document checks
+## Live document upload checks
 
-Checks on 2026-10-23 used small synthetic files with independent verification codes and known numeric totals. API requests selected `gpt-5.6-luna` through `/chat`; document processing may use a separate school pipeline.
+On 2026-10-23, live checks were run against `/chat` (`gpt-5.6-luna`) using small synthetic files containing independent verification codes and numeric tables:
 
-| Input and route | Result |
+| Test case | Result |
 | --- | --- |
-| Text-layer PDF, Responses `input_file` | HTTP 200; verification code, table row values, and total correct |
-| Text-layer PDF, Chat Completions `file` | HTTP 200; verification code and calculated total correct |
-| PDF + TXT, Responses | HTTP 200; both files correctly identified and combined totals correct |
-| Image-only PDF, Responses | HTTP 200; printed code and numbers recognized, colored shapes unavailable |
-| Same image-only sheet as PNG, Responses | HTTP 200; code, numbers, shape order, and colors correct |
-| Three documents, streaming Responses | HTTP 502 during upload; school storage reported a libcurl HTTPS protocol error before generation |
+| Text-layer PDF via Responses `input_file` | HTTP 200 — verification code, row values, and sum returned accurately |
+| Text-layer PDF via Chat Completions `file` | HTTP 200 — verification code and calculated total returned accurately |
+| PDF + TXT together via Responses | HTTP 200 — both files read and combined total calculated accurately |
+| Scanned (image-only) PDF via Responses | HTTP 200 — OCR extracted printed text and numbers, but shape colors were not visible to the model |
+| Same scanned page sent as PNG via Responses | HTTP 200 — text, numbers, shape order, and colors all identified accurately |
+| Three documents in one streaming Responses call | HTTP 502 during upload — XIPU AI storage returned an upstream `libcurl` HTTPS error before generation started |
 
-Separate webpage checks confirmed PDF text extraction and scanned-text recognition. Uploading a PDF and a TXT file together through the webpage also failed partway through, before generation. The successful two-file API check shows that multiple document inputs can work, but does not establish consistent upload availability. Neither path automatically retried failed uploads.
+In this comparison, the scanned PDF exposed printed text and numbers but not the visual details recognized from the PNG. This suggests document parsing can expose OCR text without page images; it does not establish how every document or model is processed. For tasks involving diagrams or colors, send the relevant page as an image to a model that supports images.
 
-The scanned fixture contained one raster image and no extractable text. Comparing its PDF and PNG results indicates that document parsing can expose OCR text without embedded visual details. For tasks requiring diagrams or color recognition, send the relevant page as an image to a model that advertises image support. Broader document-format coverage, long or encrypted PDFs, and live streaming with three documents remain unverified.
+Separate webpage checks also failed partway through a PDF-and-TXT upload before generation. The successful two-file API check establishes that multiple documents can work, not consistent upload availability. Neither path automatically retried failed uploads. Long or encrypted PDFs and live generation with three documents remain unverified.
+
+Live image checks covered one image through Responses and two ordered images through Chat Completions. The webpage's 10-attachment picker limit was checked on 2026-10-24; successful generation with all ten attachments remains unverified.

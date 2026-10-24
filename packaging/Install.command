@@ -3,7 +3,7 @@ CDPATH= cd -- "$(dirname -- "$0")" || exit 1
 ./xipu-bridge install "$@"
 xipu_status=$?
 if [ "$xipu_status" -ne 0 ]; then
-  printf '\nInstallation failed. Read the error above.\n'
+  printf '\nInstallation failed. Please check the error message above.\n'
 fi
 if [ -t 0 ]; then
   printf '\nPress Return to close this window.'

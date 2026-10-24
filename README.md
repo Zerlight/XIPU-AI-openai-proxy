@@ -19,31 +19,31 @@
   <a href="https://github.com/Zerlight/XIPU-AI-openai-proxy/issues">Report an issue</a>
 </p>
 
-A lightweight local bridge between your signed-in XIPU AI tab and the apps you use. A browser extension and a standalone Go executable work together to serve an authenticated API on your computer.
+XIPU AI Bridge connects your signed-in XIPU AI browser tab to local tools and apps. It pairs a browser extension with a small standalone binary to serve a local, authenticated OpenAI-compatible API on your machine.
 
-- **Text, images, and documents** through Chat Completions and the Responses API, with streaming support.
-- **Function calls and structured output** through prompt-based compatibility and schema validation. Your client runs the tools.
-- **Local control** over sessions, request defaults, timeouts, and API credentials. Your school token stays in the browser.
-- **Standalone packages** for macOS, Windows, and Linux. No additional language runtime is needed.
+- **Text, images, and documents** via Chat Completions and the Responses API, with streaming support.
+- **Function calling and structured outputs** handled through structured prompts and local JSON Schema validation, while your client executes the tools.
+- **Local control** over session isolation, request defaults, timeouts, and local API keys. Your XIPU AI credentials never leave the browser.
+- **Self-contained packages** for macOS, Windows, and Linux with no external runtime dependencies.
 
 > [!WARNING]
-> **Disclaimer — account access and academic consequences**
+> **Disclaimer — account access and academic integrity**
 >
-> XIPU AI Bridge is an independent, unofficial project. It is not affiliated with, approved by, or endorsed by Xi'an Jiaotong-Liverpool University, XIPU AI, or any model provider. Availability of this software does not establish that its use is permitted by those parties.
+> XIPU AI Bridge is an independent, unofficial project and is not affiliated with, endorsed by, or approved by Xi'an Jiaotong-Liverpool University (XJTLU), XIPU AI, or any model provider.
 >
-> Users are responsible for obtaining any necessary authorization and complying with applicable laws, university regulations, academic integrity requirements, and service terms, including access and usage limits. **Unauthorized use, academic misconduct, or other violations may result in access restrictions, account suspension or permanent termination, and disciplinary action with serious consequences for academic standing or progression.** Any consequences depend on the applicable rules, circumstances, and decisions of the relevant institution or service provider.
+> You are responsible for ensuring your use complies with applicable laws, university policies, academic integrity rules, and service terms, including access and usage limits. **Unauthorized use, academic misconduct, or other violations may result in access restrictions, account suspension or termination, and disciplinary action affecting your academic standing.**
 >
-> The software is provided **"AS IS," without warranties of any kind**, to the fullest extent permitted by law. To that extent, the authors and contributors disclaim liability for losses, service charges, account restrictions, disciplinary consequences, or other harm arising from its use. Nothing in this notice excludes liability that cannot lawfully be excluded.
+> This software is provided **"AS IS", without warranties of any kind**, to the fullest extent permitted by law. The authors and contributors are not liable for any losses, usage charges, account restrictions, disciplinary actions, or other damages arising from its use. Nothing in this notice excludes liability that cannot lawfully be excluded.
 >
-> The CC0 dedication concerns rights in the project's original material. It grants no permission to access third-party services, circumvent controls, or disregard institutional requirements. This notice describes operational risks and does not add conditions to CC0.
+> The CC0 1.0 dedication applies only to this project's original code and documentation; it does not grant permission to access third-party services, bypass security controls, or disregard institutional rules.
 
 ## Install
 
-### 1. Download and install the native app
+### 1. Install the native host
 
-From [Releases](https://github.com/Zerlight/XIPU-AI-openai-proxy/releases), download **both** the native package for your computer and **`xipu-bridge-extension.zip`**. Extract both archives. Choose `arm64` for Apple silicon or Windows/Linux ARM devices, or `amd64` for Intel/AMD 64-bit devices.
+From [Releases](https://github.com/Zerlight/XIPU-AI-openai-proxy/releases), download **both** the native package for your platform and **`xipu-bridge-extension.zip`**, then extract both archives. Choose `arm64` for Apple silicon or ARM64 devices, or `amd64` for 64-bit Intel/AMD devices.
 
-Open the extracted native package and run its installer:
+Open the extracted native package folder and run the installer:
 
 | System | Installer |
 | --- | --- |
@@ -51,60 +51,59 @@ Open the extracted native package and run its installer:
 | Windows | Double-click `Install.cmd` |
 | Linux | Open a terminal in the folder and run `bash install.sh` |
 
-Installation is for your user account; no administrator access is needed. If no release is available yet, [build the packages locally](#development).
+The installer registers the native host for your user account—no administrator privileges are required. If no prebuilt release is available yet, you can [build the packages locally](#development).
 
 ### 2. Load the browser extension
 
-1. Move the extracted extension folder to a permanent location.
-2. In Chrome, open `chrome://extensions` and turn on **Developer mode**.
+1. Move the extracted extension folder to a permanent location on your computer.
+2. Open `chrome://extensions` in Chrome and turn on **Developer mode**.
 3. Click **Load unpacked** and select the folder containing **`manifest.json`**.
 
-Keep this folder in place. The extension is already configured to connect to the native app; no extension ID or school token needs to be entered.
+Keep this folder in place after loading it. The extension comes preconfigured to talk to the local native host—you don't need to enter an extension ID or copy your XIPU AI token.
 
-### 3. Connect XIPU AI
+### 3. Set up your XIPU AI session
 
-1. Click **XIPU AI Bridge** in Chrome's toolbar or Extensions menu. On the welcome screen, choose **Start setup** to open the guide in a new tab.
-2. Open the recommended [XIPU AI chat page](https://xipuai-xjtlu-edu-cn-s.xjtlu.edu.cn/chat), sign in, and refresh the tab. Then load the available models in Setup.
-3. Choose a model and a unique conversation name, then click **Create bridge session**. Setup creates the conversation, sets Context Count to **0** with an empty system prompt, verifies it, and saves the connection settings.
-4. Copy the **base URL** and **API key** into your client. Setup does not send a model prompt.
+1. Click **XIPU AI Bridge** in the browser toolbar. On the welcome screen, click **Start setup** to open the setup guide.
+2. Click **Open XIPU AI** to open the [XIPU AI chat page](https://xipuai-xjtlu-edu-cn-s.xjtlu.edu.cn/chat), sign in, and refresh the tab. Then click **Load models** in the setup guide.
+3. Pick an initial model and a unique conversation name, then click **Create bridge session**. The setup guide will create a dedicated conversation, set its Context Count to **0** with an empty system prompt, and save your local settings—without sending any test messages or spending credits.
+4. Copy the **Base URL** and **API key** into your client.
 
-Already configured this computer? Choose **Use existing setup** on the welcome screen to open the dashboard. To select an existing dedicated conversation, use **Settings → Load from XIPU AI → Use session**, then **Save changes**.
+Already set up on this computer? Click **Use existing setup** on the welcome screen to go straight to the dashboard. To bind an existing conversation instead of creating a new one, open **Settings → Load from XIPU AI → Use session**, then click **Save changes**.
 
-Keep the newer `/chat` tab open and signed in to use documents or multiple attachments. **Choose models in your client; the bridge updates the dedicated conversation automatically.**
+Keep the `/chat` tab open and signed in while using your client (required for document uploads and multiple attachments). **You can switch models directly in your client—the bridge updates the dedicated conversation automatically.**
 
 > [!NOTE]
-> Native packages are not code-signed or notarized; your operating system may block them. Browser integration requires platform-specific verification. See [installation options](docs/reference.md#installation-options) for Edge/Chromium and [troubleshooting](docs/reference.md#uninstall-and-troubleshooting) if setup fails.
+> Prebuilt binaries are not Developer ID or Authenticode signed, or Apple notarized; your operating system may warn or block execution. See [installation options](docs/reference.md#installation-options) for Edge, Chromium, and Brave setup, or [troubleshooting](docs/reference.md#uninstall-and-troubleshooting) if the native host fails to connect.
 
-Linux Chromium and Brave users: run `bash install.sh --browser chromium` or `bash install.sh --browser brave`. See [Linux browser paths](docs/reference.md#linux-browser-paths) for custom configuration directories and NixOS.
+On Linux, Chromium and Brave users should pass their browser explicitly: `bash install.sh --browser chromium` or `bash install.sh --browser brave`. See [Linux browser paths](docs/reference.md#linux-browser-paths) for custom config directories and NixOS notes.
 
 ## Connect your client
 
 | Client setting | Value |
 | --- | --- |
 | API type | OpenAI-compatible |
-| Base URL | `http://127.0.0.1:8765/v1` by default; copy the current URL from the popup |
-| API key | Copy the local key from the popup |
-| Model | Any available model ID from `/v1/models`; overrides the default in Settings |
+| Base URL | `http://127.0.0.1:8765/v1` (default; copy the active URL from the popup) |
+| API key | Copy the local key from the extension popup |
+| Model | Any model ID returned by `/v1/models` (overrides the default model in Settings) |
 
-Both `/v1/chat/completions` and `/v1/responses` are available. The model list comes from `/v1/models`. See the [API reference](docs/reference.md#api) for examples and supported request fields.
+Both `/v1/chat/completions` and `/v1/responses` are supported, and `/v1/models` returns the available model catalog. See the [API reference](docs/reference.md#api) for request examples and supported fields.
 
-## Know before you use it
+## Good to know
 
-The bridge uses your existing school access and usage allowance. It handles one request at a time and does not retry failed school requests automatically. Model changes persist, including after a failed or cancelled request. Do not manually edit or send messages in the dedicated conversation while a request is active. Conversations and uploaded attachments remain on the school service.
-
-**Client token limits do not cap generation or charges.** The bridge accepts `max_tokens`, `max_completion_tokens`, and `max_output_tokens` for compatibility but cannot enforce them. Per-request token usage is unavailable; school points are a separate account balance. See [client compatibility](docs/reference.md#client-compatibility).
-
-Image input requires a vision-capable model. PDF and text files require the newer `/chat` frontend; see [file formats and limits](docs/reference.md#files). Function calls and JSON Schema output are prompted and validated by the bridge; they do not enable native tool calling or constrained decoding on the school server. The Responses API is stateless: clients must supply conversation history.
+- **Usage and concurrency:** Requests use your own XIPU AI account and credit balance. The bridge processes one request at a time and never retries failed upstream requests automatically.
+- **Session isolation:** When your client requests a different model, the bridge updates the dedicated conversation's model setting and leaves it selected afterward (even if a request fails or is cancelled). Avoid typing or editing settings in the dedicated conversation while a request is running. Conversations and uploaded files are stored on XIPU AI under its normal retention rules.
+- **Token limits and usage reporting:** `max_tokens`, `max_completion_tokens`, and `max_output_tokens` are accepted for client compatibility, **but the bridge cannot enforce them as generation or spending limits.** Per-request token counts are unavailable. XIPU AI's **My Score** page reports account credits, which may update with a delay. See [client compatibility](docs/reference.md#client-compatibility).
+- **Multimodal, tools, and history:** Image inputs require a vision-capable model, and PDF/text document uploads require the `/chat` interface (see [file formats and limits](docs/reference.md#files)). Function calling and JSON Schema outputs are emulated via prompts and validated locally rather than through native server-side constrained decoding. Both API endpoints are stateless, so your client must include prior messages on each turn.
 
 ## Documentation
 
 | Guide | Contents |
 | --- | --- |
-| [Settings and sessions](docs/reference.md#settings) | Defaults, model selection, reasoning, timeouts, and API keys |
-| [API reference](docs/reference.md#api) | Text, images, files, streaming, function calls, structured output, and compatibility limits |
-| [Installation and troubleshooting](docs/reference.md#installation-options) | Other browsers, upgrades, uninstalling, and common errors |
-| [Security boundaries](docs/reference.md#security-boundaries) | Authentication, token handling, and local access |
-| [Testing guide](docs/verification.md) | Automated coverage and verification limits |
+| [Settings and sessions](docs/reference.md#settings) | Default parameters, model switching, reasoning options, timeouts, and API key rotation |
+| [API reference](docs/reference.md#api) | Text, images, documents, streaming, function calling, structured output, and compatibility details |
+| [Installation and troubleshooting](docs/reference.md#installation-options) | Additional browsers, upgrades, uninstalling, and common issues |
+| [Security boundaries](docs/reference.md#security-boundaries) | Local authentication, credential isolation, and loopback restrictions |
+| [Testing guide](docs/verification.md) | Automated test coverage and known verification boundaries |
 
 ## Development
 
@@ -116,8 +115,8 @@ bridge-check
 bridge-release
 ```
 
-Packages are written to `dist/release/`; use them with the [installation steps](#install) above. See the [development reference](docs/reference.md#development) for builds, UI previews, and release automation.
+Release archives are written to `dist/release/` and can be installed using the [steps above](#install). See the [development reference](docs/reference.md#development) for local builds, UI preview servers, and release workflows.
 
 ## License
 
-Original material is dedicated to the public domain under [CC0 1.0 Universal](LICENSE). Third-party material retains its own terms; see [third-party notices](THIRD_PARTY_NOTICES.md) and [coss-ui attribution](docs/coss-ui-provenance.md).
+Original code and documentation are dedicated to the public domain under [CC0 1.0 Universal](LICENSE). Third-party libraries and adapted styles keep their respective licenses; see [third-party notices](THIRD_PARTY_NOTICES.md) and [coss-ui attribution](docs/coss-ui-provenance.md).

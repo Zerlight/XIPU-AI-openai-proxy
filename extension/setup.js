@@ -15,7 +15,7 @@
       BridgeUI.request(type, fields),
       new Promise((_, reject) => {
         timer = setTimeout(() => reject(new Error(type === "setupSchool"
-          ? "Setup timed out. A school change may already have completed. Check setup before continuing."
+          ? "Setup timed out. The conversation change may already have completed—click Check setup before continuing."
           : "The extension response timed out. Refresh local status, stop waiting, or open Settings.")), timeout);
       })
     ]).finally(() => clearTimeout(timer));
@@ -68,21 +68,21 @@
       else element(`step-${step}`).removeAttribute("aria-current");
     }
     const states = {
-      ready: ["Connected", "success", "The native app and XIPU AI tab are connected."],
-      busy: ["In progress", "info", pending || snapshot.setupRunning ? "Setup is running. Keep XIPU AI open." : "A bridge request is running. Setup will be available when it finishes."],
-      "no-tab": ["Sign in needed", "warning", "The native app is connected. Open XIPU AI below and sign in."],
-      offline: ["Native app offline", "secondary", "Install the native app if needed, then reconnect."]
+      ready: ["Connected", "success", "The native host and XIPU AI tab are connected."],
+      busy: ["In progress", "info", pending || snapshot.setupRunning ? "Setup is running. Keep your XIPU AI tab open." : "An API request is running. Setup will be available once it finishes."],
+      "no-tab": ["Sign in needed", "warning", "The native host is connected. Open the new XIPU AI chat page below and sign in."],
+      offline: ["Native app offline", "secondary", "Install the native host if you haven’t yet, then click Reconnect."]
     };
     const [label, variant, detail] = states[status] || states.offline;
     element("connection-status").textContent = loaded ? label : refreshing ? "Checking connection" : "Status unavailable";
     element("connection-status").dataset.variant = variant;
-    element("connection-detail").textContent = !loaded ? refreshing ? "Checking the native app and signed-in tab." : "Refresh to check the connection again."
-      : pending === "cancel" ? "Stopping the wait. A school change may already have completed."
+    element("connection-detail").textContent = !loaded ? refreshing ? "Checking the native host and signed-in tab…" : "Click Refresh to check the connection again."
+      : pending === "cancel" ? "Stopping the wait. A change in XIPU AI may already have completed."
       : snapshot.setupWaiting === true ? "Waiting briefly before configuring the conversation."
-      : pending === "models" ? "Reading available models from XIPU AI."
-      : pending === "setup" ? "Preparing your conversation. Keep XIPU AI open."
-      : pending === "check" ? "Checking the existing conversation in XIPU AI."
-      : pending === "reconnect" ? "Connecting to the native app." : detail;
+      : pending === "models" ? "Reading available models from XIPU AI…"
+      : pending === "setup" ? "Setting up your dedicated conversation. Keep XIPU AI open."
+      : pending === "check" ? "Checking the conversation in XIPU AI…"
+      : pending === "reconnect" ? "Connecting to the native host…" : detail;
     element("reconnect").disabled = locked || status === "busy" || status === "ready";
     element("check-connection").disabled = refreshing;
     element("stop-waiting").hidden = !waiting && pending !== "cancel";
@@ -99,10 +99,10 @@
     const resumable = progress?.session_id && ["created", "configured"].includes(progress.phase);
     const healthyWait = ["models", "check", "setup"].includes(pending) || (snapshot.setupRunning && !uncertain);
     if (healthyWait) recovery = "";
-    else if (progress?.phase === "creating") recovery = "The conversation creation outcome is not yet confirmed. Check setup to look for the existing conversation, or select it in Settings. Do not create another one.";
-    else if (resumable) recovery = "Your conversation already exists. Resume setup to verify its configuration and save the local connection. No new conversation will be created.";
-    else if (progress?.phase === "complete" && !verified()) recovery = "Setup was completed, but the saved connection has changed. Review the existing session in Settings.";
-    else if (uncertain && pending !== "setup") recovery = "Could not confirm the setup outcome. Check the connection again before continuing. No new conversation will be created automatically.";
+    else if (progress?.phase === "creating") recovery = "Whether the conversation was created is not yet confirmed. Click Check setup to look for it, or select it in Settings—do not create a duplicate.";
+    else if (resumable) recovery = "Your conversation has already been created. Click Resume setup to finish configuring it and save your local settings.";
+    else if (progress?.phase === "complete" && !verified()) recovery = "Setup finished earlier, but your saved connection has changed. Review your active session in Settings.";
+    else if (uncertain && pending !== "setup") recovery = "Could not confirm whether setup finished. Click Check setup before continuing so a duplicate conversation isn’t created.";
     message("recovery", recovery);
     element("check-setup").hidden = !recovery;
     element("check-setup").disabled = locked || !connected;
@@ -155,7 +155,7 @@
     catch (error) {
       if (revision === stateRevision) {
         loaded = false;
-        message("error", error.message || "Could not read setup state. Check the connection again.");
+        message("error", error.message || "Could not read setup state. Check the connection and try again.");
         statusReadError = true;
       }
     }
@@ -190,7 +190,7 @@
       if (!models.length) throw new Error("No models are available for this account.");
     } catch (error) {
       if (revision === operationRevision) {
-        message("error", error.message || "Could not load models. Sign in to XIPU AI and try again.");
+        message("error", error.message || "Could not load models. Make sure you are signed in to XIPU AI and try again.");
         failed = true;
       }
     }
@@ -209,7 +209,7 @@
     if (!name || name.length > 200 || (!progress && sessionNames.has(name))) {
       element("session-name").setAttribute("aria-invalid", "true");
       element("session-name").focus();
-      message("error", sessionNames.has(name) ? "That conversation name already exists. Choose a new name, or select the existing session in Settings." : "Enter a conversation name of 1–200 characters.");
+      message("error", sessionNames.has(name) ? "A conversation with that name already exists. Pick a different name, or select the existing conversation in Settings." : "Enter a conversation name of 1–200 characters.");
       return;
     }
     uncertain = true;
@@ -223,7 +223,7 @@
     }
     catch (error) {
       if (revision !== operationRevision) return;
-      message("error", error.message || "Setup could not finish. Check its status before continuing.");
+      message("error", error.message || "Setup could not finish. Check the status before continuing.");
       failed = true;
     } finally { await finishOperation(revision, failed); }
   }
@@ -239,7 +239,7 @@
       apply(response, true);
     } catch (error) {
       if (revision === operationRevision) {
-        message("error", error.message || "Could not check the school conversation. Use Settings to select it manually.");
+        message("error", error.message || "Could not check the conversation in XIPU AI. Open Settings to select it manually.");
         failed = true;
       }
     }
@@ -250,7 +250,7 @@
     if (element("stop-waiting").disabled) return;
     uncertain = true;
     message("error", "");
-    message("notice", "Stopped waiting for the previous reply. A school change may already have completed. Check setup or use Settings before continuing.");
+    message("notice", "Stopped waiting for the previous operation. A change in XIPU AI may already have completed—click Check setup or use Settings before continuing.");
     const revision = beginOperation("cancel");
     try {
       const response = await request("cancelSetup");

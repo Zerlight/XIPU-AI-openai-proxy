@@ -1,10 +1,10 @@
 (() => {
   "use strict";
   const states = {
-    ready: ["Connected", "success", "Keep XIPU AI open and signed in."],
-    busy: ["In progress", "info", "A request is running. Keep XIPU AI open."],
-    offline: ["Offline", "secondary", "The native app is not connected."],
-    "no-tab": ["Sign in needed", "warning", "The native app is ready. Use Setup to open XIPU AI and sign in."]
+    ready: ["Connected", "success", "Keep your XIPU AI chat tab open and signed in."],
+    busy: ["In progress", "info", "A request is running. Keep your XIPU AI tab open."],
+    offline: ["Offline", "secondary", "The native host is not connected."],
+    "no-tab": ["Sign in needed", "warning", "The native host is ready. Open the XIPU AI chat page via Setup and sign in."]
   };
   const keys = ["bridgeStatus", "bridgeError", "apiKey", "baseURL", "sessionName", "transport", "onboardingComplete", "setupProgress"];
   const element = id => document.getElementById(id);
@@ -56,11 +56,11 @@
     const continuing = ["created", "configured"].includes(progress?.phase);
     const reviewing = progress != null && !continuing;
     element("welcome-title").textContent = continuing ? "Continue setup" : reviewing ? "Review setup" : "Welcome";
-    element("welcome-description").textContent = continuing ? "Continue the saved setup for this computer."
-      : reviewing ? "Check the earlier setup attempt before continuing." : "Set up XIPU AI Bridge for your OpenAI-compatible client.";
+    element("welcome-description").textContent = continuing ? "Pick up where you left off on this computer."
+      : reviewing ? "Check your earlier setup attempt before continuing." : "Use XIPU AI with your local OpenAI-compatible apps.";
     element("start-setup").textContent = continuing ? "Continue setup" : reviewing ? "Review setup" : "Start setup";
-    element("welcome-status").textContent = reviewing ? "Setup will check the saved progress. It will not create another conversation automatically."
-      : "Setup opens in a new tab. Already configured? Use your existing setup to view the connection.";
+    element("welcome-status").textContent = reviewing ? "Setup will check your saved progress without creating a duplicate conversation."
+      : "Setup opens in a new tab. Already set up on this computer? Choose Use existing setup.";
   }
 
   async function refresh() {
@@ -94,9 +94,9 @@
       storageReady = false;
       showView(false);
       element("welcome-title").textContent = "Setup unavailable";
-      element("welcome-description").textContent = "Your setup status is temporarily unavailable.";
+      element("welcome-description").textContent = "Could not load your saved setup status.";
       element("start-setup").textContent = "Open setup";
-      element("welcome-status").textContent = "Try again to read your saved connection, or open setup for help.";
+      element("welcome-status").textContent = "Click Try again to reload your connection, or open Setup.";
       element("welcome-retry").hidden = false;
       showError("Could not read setup status. Try again or reopen the extension.");
     }
@@ -111,7 +111,7 @@
       element("feedback").textContent = `${label} copied.`;
     } catch {
       element("feedback").textContent = id === "key"
-        ? "Copy failed. Show the key, select it, and copy manually."
+        ? "Copy failed. Reveal the key and copy it manually."
         : "Copy failed. Select the URL and copy it manually.";
     }
   }
@@ -165,7 +165,7 @@
       await refresh();
     } catch {
       element("retry").disabled = false;
-      showError("Could not reconnect. Close and reopen the extension, then try again.");
+      showError("Could not reconnect. Reopen the extension and try again.");
     }
   });
   chrome.storage.onChanged.addListener((changes, area) => {
