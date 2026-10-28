@@ -19,6 +19,9 @@ Prebuilt binaries are not Developer ID or Authenticode signed, or Apple notarize
 
 On Linux, Chromium and Brave users should specify their browser when installing:
 `bash install.sh --browser chromium` or `bash install.sh --browser brave`.
+
+The Linux executable is installed at `~/.local/opt/xipu-ai-bridge/xipu-bridge`; configuration and the local API key are stored in `$XDG_CONFIG_HOME/xipu-ai-bridge` (default `~/.config/xipu-ai-bridge`). To change only the program location, use `bash install.sh --prefix "$HOME/Applications"`, which installs under `~/Applications/xipu-ai-bridge`. The Linux-only `--prefix` takes an absolute parent directory; use the same value when upgrading or running `./xipu-bridge uninstall`.
+
 Pass `--dry-run` to preview the target paths without modifying any files. For custom browser profile locations on Linux or macOS, pass `--native-host-dir /absolute/path/to/NativeMessagingHosts` (and use the same flag when upgrading or uninstalling).
 
 For Edge setup, upgrades, advanced settings, and troubleshooting, see the [reference guide](https://github.com/Zerlight/XIPU-AI-openai-proxy/blob/main/docs/reference.md).

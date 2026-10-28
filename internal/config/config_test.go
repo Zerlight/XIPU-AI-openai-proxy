@@ -6,9 +6,39 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestConfigDir(t *testing.T) {
+	base := t.TempDir()
+	t.Setenv("XIPU_BRIDGE_CONFIG_DIR", "")
+	t.Setenv("HOME", base)
+	t.Setenv("XDG_CONFIG_HOME", base)
+	t.Setenv("AppData", base)
+	want := filepath.Join(base, "XIPU AI Bridge")
+	if runtime.GOOS == "linux" {
+		want = filepath.Join(base, "xipu-ai-bridge")
+	} else if runtime.GOOS == "darwin" {
+		want = filepath.Join(base, "Library", "Application Support", "XIPU AI Bridge")
+	}
+	if got, err := ConfigDir(); err != nil || got != want {
+		t.Fatalf("configuration directory = %q, %v; want %q", got, err, want)
+	}
+	if runtime.GOOS == "linux" {
+		t.Setenv("XDG_CONFIG_HOME", "")
+		want = filepath.Join(base, ".config", "xipu-ai-bridge")
+		if got, err := ConfigDir(); err != nil || got != want {
+			t.Fatalf("default configuration directory = %q, %v; want %q", got, err, want)
+		}
+	}
+	override := filepath.Join(base, "custom")
+	t.Setenv("XIPU_BRIDGE_CONFIG_DIR", override)
+	if got, err := ConfigDir(); err != nil || got != override {
+		t.Fatalf("override = %q, %v; want %q", got, err, override)
+	}
+}
 
 func TestDefaultsAndExplicitFalseSurvivePersistence(t *testing.T) {
 	dir := t.TempDir()

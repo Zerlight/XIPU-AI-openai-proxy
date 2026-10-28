@@ -101,17 +101,30 @@ try {
       assert.match(result.stdout, /Extension ID: eegmaembfjajhifjbddmdbppchinmmcg/);
       assert.ok(result.stdout.includes(home));
       if (platform === 'linux') {
-        const browserEnv = { ...env, CHROME_CONFIG_HOME: path.join(home, 'Browser config'), CHROME_USER_DATA_DIR: path.join(home, 'Browser data') };
+        const defaultBinary = path.join(home, '.local', 'opt', 'xipu-ai-bridge', 'xipu-bridge');
+        assert.ok(result.stdout.includes(defaultBinary), result.stdout);
+        assert.ok(result.stdout.includes(path.join(env.XDG_CONFIG_HOME, 'xipu-ai-bridge', 'config.json')), result.stdout);
+        const fallbackEnv = { ...env };
+        delete fallbackEnv.XDG_CONFIG_HOME;
+        const fallback = command(path.join(unpacked, executable), ['install', '--dry-run'], { env: fallbackEnv });
+        assert.ok(fallback.stdout.includes(path.join(home, '.config', 'xipu-ai-bridge', 'config.json')), fallback.stdout);
+        assert.ok(fallback.stdout.includes(defaultBinary), fallback.stdout);
+        const browserEnv = { ...env, XDG_CONFIG_HOME: path.join(home, 'Host config'), CHROME_CONFIG_HOME: path.join(home, 'Browser config'), CHROME_USER_DATA_DIR: path.join(home, 'Browser data') };
         const nativeDir = path.join(home, 'Custom hosts');
-        for (const [args, directory] of [
+        const installPrefix = path.join(home, 'Custom programs');
+        for (const [args, directory, binary = defaultBinary] of [
           [['--browser', 'chromium'], path.join(browserEnv.CHROME_USER_DATA_DIR, 'NativeMessagingHosts')],
-          [['--browser', 'brave'], path.join(env.XDG_CONFIG_HOME, 'BraveSoftware', 'Brave-Browser', 'NativeMessagingHosts')],
-          [['--browser', 'chromium', '--native-host-dir', nativeDir], nativeDir]
+          [['--browser', 'brave'], path.join(browserEnv.XDG_CONFIG_HOME, 'BraveSoftware', 'Brave-Browser', 'NativeMessagingHosts')],
+          [['--browser', 'chromium', '--native-host-dir', nativeDir], nativeDir],
+          [['--prefix', installPrefix], path.join(browserEnv.CHROME_USER_DATA_DIR, 'NativeMessagingHosts'), path.join(installPrefix, 'xipu-ai-bridge', 'xipu-bridge')]
         ]) {
           const probe = command(path.join(unpacked, executable), ['install', '--dry-run', ...args], { env: browserEnv });
           assert.ok(probe.stdout.includes(path.join(directory, 'edu.xjtlu.xipu_bridge.json')), probe.stdout);
-          assert.ok(probe.stdout.includes(path.join(env.XDG_CONFIG_HOME, 'XIPU AI Bridge', 'config.json')));
+          assert.ok(probe.stdout.includes(path.join(browserEnv.XDG_CONFIG_HOME, 'xipu-ai-bridge', 'config.json')), probe.stdout);
+          assert.ok(probe.stdout.includes(binary), probe.stdout);
         }
+        const uninstall = command(path.join(unpacked, executable), ['uninstall', '--dry-run', '--prefix', installPrefix], { env: browserEnv });
+        assert.ok(uninstall.stdout.includes(path.join(browserEnv.CHROME_USER_DATA_DIR, 'NativeMessagingHosts', 'edu.xjtlu.xipu_bridge.json')), uninstall.stdout);
       }
       if (platform === 'windows') windowsLauncher(unpacked, env);
       assert.deepEqual(fs.readdirSync(home), [], 'dry-run mutated the isolated home');

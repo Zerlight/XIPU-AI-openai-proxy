@@ -33,7 +33,7 @@ type hostManifest struct {
 
 type options struct {
 	action, browser, id, session string
-	nativeHostDir                string
+	nativeHostDir, prefix        string
 	port                         int
 	dryRun, sessionSet, portSet  bool
 }
@@ -85,11 +85,15 @@ func Run(args []string) error {
 
 const usage = `Usage:
   xipu-bridge install [--extension-id ID] [--browser chrome|edge|chromium|brave]
-      [--native-host-dir DIRECTORY] [--session-name NAME] [--port 8765] [--dry-run]
+      [--prefix DIRECTORY] [--native-host-dir DIRECTORY] [--session-name NAME] [--port 8765] [--dry-run]
   xipu-bridge uninstall [--browser chrome|edge|chromium|brave]
-      [--native-host-dir DIRECTORY] [--dry-run]
+      [--prefix DIRECTORY] [--native-host-dir DIRECTORY] [--dry-run]
 
-Install copies this binary into your user config directory and registers the Native Messaging host.
+Install copies this binary and registers the Native Messaging host.
+On Linux, the binary is installed in ~/.local/opt/xipu-ai-bridge and configuration in $XDG_CONFIG_HOME/xipu-ai-bridge (default ~/.config/xipu-ai-bridge).
+On macOS and Windows, the binary and configuration share the OS user configuration directory under "XIPU AI Bridge".
+On Linux, --prefix sets an absolute parent directory for xipu-ai-bridge (use the same prefix when upgrading or uninstalling).
+The prefix does not change the configuration or browser manifest directories.
 The default extension ID is ` + officialExtensionID + ` (pass --extension-id for custom builds).
 Existing settings are preserved unless overridden with --session-name or --port. Your local API key is preserved.
 The default session name is "XIPU AI Bridge".
@@ -109,6 +113,7 @@ func parse(args []string) (options, error) {
 	fs.SetOutput(io.Discard)
 	fs.StringVar(&o.browser, "browser", "chrome", "chrome, edge, chromium, or brave (Linux)")
 	fs.StringVar(&o.nativeHostDir, "native-host-dir", "", "absolute NativeMessagingHosts directory (Linux/macOS)")
+	fs.StringVar(&o.prefix, "prefix", "", "absolute parent of the xipu-ai-bridge program directory (Linux)")
 	fs.BoolVar(&o.dryRun, "dry-run", false, "describe changes without writing files or registry entries")
 	if o.action == "install" {
 		defaults := config.Defaults()
@@ -122,10 +127,15 @@ func parse(args []string) (options, error) {
 	if fs.NArg() != 0 {
 		return o, errors.New("unexpected positional arguments")
 	}
+	prefixSet := false
 	fs.Visit(func(f *flag.Flag) {
 		o.sessionSet = o.sessionSet || f.Name == "session-name"
 		o.portSet = o.portSet || f.Name == "port"
+		prefixSet = prefixSet || f.Name == "prefix"
 	})
+	if prefixSet && (!filepath.IsAbs(o.prefix) || strings.ContainsAny(o.prefix, "\x00\r\n")) {
+		return o, errors.New("--prefix must be an absolute path without NUL or line breaks")
+	}
 	if o.browser != "chrome" && o.browser != "edge" && o.browser != "chromium" && o.browser != "brave" {
 		return o, errors.New("--browser must be chrome, edge, chromium, or brave")
 	}
@@ -145,12 +155,15 @@ func parse(args []string) (options, error) {
 }
 
 func paths(o options, env environment) (layout, error) {
-	p := layout{dir: filepath.Join(env.configBase, "XIPU AI Bridge")}
+	p := layout{dir: config.DefaultDir(env.configBase, env.goos)}
 	if !filepath.IsAbs(env.configBase) || !filepath.IsAbs(env.home) {
 		return p, errors.New("user home and configuration paths must be absolute")
 	}
 	if o.browser == "brave" && env.goos != "linux" {
 		return p, errors.New("--browser brave is currently supported only on Linux")
+	}
+	if o.prefix != "" && env.goos != "linux" {
+		return p, errors.New("--prefix is supported only on Linux")
 	}
 	p.binary = filepath.Join(p.dir, "xipu-bridge")
 	p.config = filepath.Join(p.dir, "config.json")
@@ -160,6 +173,11 @@ func paths(o options, env environment) (layout, error) {
 		name := map[string]string{"chrome": "Google/Chrome", "edge": "Microsoft Edge", "chromium": "Chromium"}[o.browser]
 		manifestDir = filepath.Join(env.home, "Library", "Application Support", filepath.FromSlash(name), "NativeMessagingHosts")
 	case "linux":
+		prefix := o.prefix
+		if prefix == "" {
+			prefix = filepath.Join(env.home, ".local", "opt")
+		}
+		p.binary = filepath.Join(prefix, "xipu-ai-bridge", "xipu-bridge")
 		name := map[string]string{"chrome": "google-chrome", "edge": "microsoft-edge", "chromium": "chromium", "brave": "BraveSoftware/Brave-Browser"}[o.browser]
 		base := env.configBase
 		chromiumPaths := o.browser == "chrome" || o.browser == "chromium"

@@ -54,6 +54,8 @@ func TestInvalidArguments(t *testing.T) {
 		{"install", "--extension-id", testID, "--session-name", "bad\nname"},
 		{"install", "--extension-id", testID, "--browser", "../../other"},
 		{"uninstall", "--extension-id", testID}, {"uninstall", "extra"},
+		{"install", "--prefix="}, {"uninstall", "--prefix", "relative"},
+		{"install", "--prefix", "/bad\npath"}, {"install", "--prefix", "/bad\rpath"}, {"install", "--prefix", "/bad\x00path"},
 	} {
 		if _, err := parse(args); err == nil {
 			t.Errorf("accepted invalid arguments: %q", args)
@@ -158,6 +160,17 @@ func TestPlatformLayouts(t *testing.T) {
 				if goos == "windows" && !strings.HasSuffix(p.binary, ".exe") {
 					t.Fatal("Windows binary missing extension")
 				}
+				wantDir := filepath.Join(env.configBase, "XIPU AI Bridge")
+				wantBinary := filepath.Join(wantDir, "xipu-bridge")
+				if goos == "linux" {
+					wantDir = filepath.Join(env.configBase, "xipu-ai-bridge")
+					wantBinary = filepath.Join(env.home, ".local", "opt", "xipu-ai-bridge", "xipu-bridge")
+				} else if goos == "windows" {
+					wantBinary += ".exe"
+				}
+				if p.dir != wantDir || p.config != filepath.Join(wantDir, "config.json") || p.binary != wantBinary {
+					t.Fatalf("unexpected program or config path: %+v", p)
+				}
 			})
 		}
 	}
@@ -215,7 +228,7 @@ func TestLinuxBrowserPaths(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if p.manifest != filepath.Join(test.want, hostName+".json") || p.dir != filepath.Join(env.configBase, "XIPU AI Bridge") {
+			if p.manifest != filepath.Join(test.want, hostName+".json") || p.dir != filepath.Join(env.configBase, "xipu-ai-bridge") {
 				t.Fatalf("incorrect browser or host directory: %+v", p)
 			}
 		})
@@ -288,85 +301,146 @@ func TestCustomNativeHostDirectoryLifecycle(t *testing.T) {
 }
 
 func TestInstallUpdateAndUninstallPreserveKey(t *testing.T) {
-	env := testEnvironment(t, "linux")
-	o := installOptions(t, "--session-name", "Bridge custom", "--port", "8766")
-	if err := execute(o, env); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"default", "custom prefix"} {
+		t.Run(name, func(t *testing.T) {
+			env := testEnvironment(t, "linux")
+			var extra []string
+			if name == "custom prefix" {
+				extra = []string{"--prefix", filepath.Join(filepath.Dir(env.executable), "Program files")}
+			}
+			o := installOptions(t, append([]string{"--session-name", "Bridge custom", "--port", "8766", "--dry-run"}, extra...)...)
+			p, _ := paths(o, env)
+			if len(extra) != 0 && p.binary != filepath.Join(extra[1], "xipu-ai-bridge", "xipu-bridge") {
+				t.Fatalf("incorrect prefix destination: %s", p.binary)
+			}
+			if p.dir != filepath.Join(env.configBase, "xipu-ai-bridge") || p.manifest != filepath.Join(env.configBase, "google-chrome", "NativeMessagingHosts", hostName+".json") {
+				t.Fatalf("program prefix changed configuration or registration: %+v", p)
+			}
+			if err := execute(o, env); err != nil {
+				t.Fatal(err)
+			}
+			for _, dir := range []string{env.home, env.configBase, filepath.Dir(p.binary)} {
+				if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("dry-run created %s", dir)
+				}
+			}
+			if len(extra) != 0 {
+				if err := os.Mkdir(extra[1], 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			o.dryRun = false
+			if err := execute(o, env); err != nil {
+				t.Fatal(err)
+			}
+			if len(extra) != 0 && runtime.GOOS != "windows" {
+				info, err := os.Stat(extra[1])
+				if err != nil || info.Mode().Perm() != 0o755 {
+					t.Fatal("installer changed prefix permissions")
+				}
+			}
+			cfg, err := config.Load(p.dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.DefaultModel = "synthetic-model"
+			cfg.Thinking = "high"
+			cfg.Online = true
+			cfg.ChatTimeoutSeconds = 300
+			cfg.ModelTimeoutSeconds = 60
+			cfg.IdleTimeoutSeconds = 90
+			cfg.IncludeReasoning = false
+			if err := config.Save(p.dir, cfg); err != nil {
+				t.Fatal(err)
+			}
+			keyPath := filepath.Join(p.dir, "api-key.txt")
+			key := []byte("synthetic-key-for-tests-only")
+			if err := os.WriteFile(keyPath, key, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			second, _ := parse(append([]string{"install", "--extension-id", strings.Repeat("b", 32), "--browser", "edge"}, extra...))
+			if err := execute(second, env); err != nil {
+				t.Fatal(err)
+			}
+			data, _ := os.ReadFile(p.config)
+			var c config.Config
+			if err := json.Unmarshal(data, &c); err != nil {
+				t.Fatal(err)
+			}
+			if c.Settings != cfg.Settings || len(c.AllowedOrigins) != 2 {
+				t.Fatalf("configuration lost on update: %+v", c)
+			}
+			if err := execute(installOptions(t, append([]string{"--session-name", "Bridge new", "--port", "9876"}, extra...)...), env); err != nil {
+				t.Fatal(err)
+			}
+			c, err = config.Load(p.dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.SessionName, cfg.Port = "Bridge new", 9876
+			if c.Settings != cfg.Settings || len(c.AllowedOrigins) != 2 {
+				t.Fatalf("explicit overrides changed unrelated settings: %+v", c)
+			}
+			data, _ = os.ReadFile(p.manifest)
+			var m hostManifest
+			if err := json.Unmarshal(data, &m); err != nil || m.Path != p.binary || m.Type != "stdio" {
+				t.Fatalf("manifest does not point directly to executable: %s", data)
+			}
+			if runtime.GOOS != "windows" {
+				for file, mode := range map[string]os.FileMode{p.binary: 0o700, p.config: 0o600, p.manifest: 0o600} {
+					info, err := os.Stat(file)
+					if err != nil || info.Mode().Perm() != mode {
+						t.Fatalf("incorrect mode on %s", file)
+					}
+				}
+			}
+			u, _ := parse(append([]string{"uninstall"}, extra...))
+			if len(extra) != 0 {
+				wrong, _ := parse([]string{"uninstall"})
+				if execute(wrong, env) == nil || execute(installOptions(t), env) == nil {
+					t.Fatal("modified a registration belonging to a different prefix")
+				}
+			}
+			if err := execute(u, env); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Stat(p.manifest); !errors.Is(err, os.ErrNotExist) {
+				t.Fatal("browser manifest was not removed")
+			}
+			for _, file := range []string{p.config, p.binary, keyPath} {
+				if _, err := os.Stat(file); err != nil {
+					t.Fatalf("shared file removed: %s", file)
+				}
+			}
+			gotKey, _ := os.ReadFile(keyPath)
+			if !bytes.Equal(gotKey, key) {
+				t.Fatal("API key changed")
+			}
+			if err := execute(u, env); err != nil {
+				t.Fatalf("repeated uninstall failed: %v", err)
+			}
+		})
 	}
-	p, _ := paths(o, env)
-	cfg, err := config.Load(p.dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.DefaultModel = "synthetic-model"
-	cfg.Thinking = "high"
-	cfg.Online = true
-	cfg.ChatTimeoutSeconds = 300
-	cfg.ModelTimeoutSeconds = 60
-	cfg.IdleTimeoutSeconds = 90
-	cfg.IncludeReasoning = false
-	if err := config.Save(p.dir, cfg); err != nil {
-		t.Fatal(err)
-	}
-	keyPath := filepath.Join(p.dir, "api-key.txt")
-	key := []byte("synthetic-key-for-tests-only")
-	if err := os.WriteFile(keyPath, key, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	second, _ := parse([]string{"install", "--extension-id", strings.Repeat("b", 32), "--browser", "edge"})
-	if err := execute(second, env); err != nil {
-		t.Fatal(err)
-	}
-	data, _ := os.ReadFile(p.config)
-	var c config.Config
-	if err := json.Unmarshal(data, &c); err != nil {
-		t.Fatal(err)
-	}
-	if c.Settings != cfg.Settings || len(c.AllowedOrigins) != 2 {
-		t.Fatalf("configuration lost on update: %+v", c)
-	}
-	if err := execute(installOptions(t, "--session-name", "Bridge new", "--port", "9876"), env); err != nil {
-		t.Fatal(err)
-	}
-	c, err = config.Load(p.dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cfg.SessionName, cfg.Port = "Bridge new", 9876
-	if c.Settings != cfg.Settings || len(c.AllowedOrigins) != 2 {
-		t.Fatalf("explicit overrides changed unrelated settings: %+v", c)
-	}
-	data, _ = os.ReadFile(p.manifest)
-	var m hostManifest
-	if err := json.Unmarshal(data, &m); err != nil || m.Path != p.binary || m.Type != "stdio" {
-		t.Fatalf("manifest does not point directly to executable: %s", data)
-	}
-	if runtime.GOOS != "windows" {
-		for file, mode := range map[string]os.FileMode{p.binary: 0o700, p.config: 0o600, p.manifest: 0o600} {
-			info, err := os.Stat(file)
-			if err != nil || info.Mode().Perm() != mode {
-				t.Fatalf("incorrect mode on %s", file)
+}
+
+func TestPrefixRequiresLinux(t *testing.T) {
+	for _, goos := range []string{"darwin", "windows"} {
+		env := testEnvironment(t, goos)
+		prefix := filepath.Join(filepath.Dir(env.executable), "programs")
+		for _, action := range []string{"install", "uninstall"} {
+			o, err := parse([]string{action, "--prefix", prefix})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := execute(o, env); err == nil || !strings.Contains(err.Error(), "--prefix is supported only on Linux") {
+				t.Fatalf("accepted prefix on %s: %v", goos, err)
 			}
 		}
-	}
-	u, _ := parse([]string{"uninstall"})
-	if err := execute(u, env); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(p.manifest); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("browser manifest was not removed")
-	}
-	for _, file := range []string{p.config, p.binary, keyPath} {
-		if _, err := os.Stat(file); err != nil {
-			t.Fatalf("shared file removed: %s", file)
+		for _, dir := range []string{prefix, env.configBase, env.home} {
+			if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("unsupported prefix created %s", dir)
+			}
 		}
-	}
-	gotKey, _ := os.ReadFile(keyPath)
-	if !bytes.Equal(gotKey, key) {
-		t.Fatal("API key changed")
-	}
-	if err := execute(u, env); err != nil {
-		t.Fatalf("repeated uninstall failed: %v", err)
 	}
 }
 
@@ -423,7 +497,7 @@ func TestRefusesSymlinkDestination(t *testing.T) {
 	env := testEnvironment(t, "linux")
 	o := installOptions(t)
 	p, _ := paths(o, env)
-	if err := makePrivateDir(p.dir); err != nil {
+	if err := makePrivateDir(filepath.Dir(p.binary)); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(env.executable, p.binary); err != nil {
@@ -439,19 +513,29 @@ func TestRefusesSymlinkDestination(t *testing.T) {
 }
 
 func TestRefusesSymlinkParent(t *testing.T) {
-	env := testEnvironment(t, "linux")
-	target := filepath.Join(filepath.Dir(env.executable), "elsewhere")
-	if err := os.Mkdir(target, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(target, env.configBase); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
-	if err := execute(installOptions(t), env); err == nil {
-		t.Fatal("followed symlinked parent")
-	}
-	contents, err := os.ReadDir(target)
-	if err != nil || len(contents) != 0 {
-		t.Fatal("modified symlink target")
+	for _, name := range []string{"config", "prefix"} {
+		t.Run(name, func(t *testing.T) {
+			env := testEnvironment(t, "linux")
+			o := installOptions(t)
+			link := env.configBase
+			if name == "prefix" {
+				link = filepath.Join(filepath.Dir(env.executable), "programs")
+				o = installOptions(t, "--prefix", link)
+			}
+			target := filepath.Join(filepath.Dir(env.executable), "elsewhere")
+			if err := os.Mkdir(target, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, link); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			if err := execute(o, env); err == nil {
+				t.Fatal("followed symlinked parent")
+			}
+			contents, err := os.ReadDir(target)
+			if err != nil || len(contents) != 0 {
+				t.Fatal("modified symlink target")
+			}
+		})
 	}
 }

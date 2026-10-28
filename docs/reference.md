@@ -17,9 +17,26 @@
 
 For a standard Chrome setup, follow the [installation steps in the README](../README.md#install). The native host and browser extension are installed separately; the bundled extension has a fixed extension ID that the installer registers automatically.
 
-Before upgrading the native host, quit your browser so the executable can be replaced cleanly. The installer copies the binary into your user configuration directory and preserves your existing settings and local API key, so you can delete the downloaded native archive afterward. Keep the unpacked extension folder in place. Your browser launches the native host on demand—do not start it manually as a background service.
+Before upgrading the native host, quit your browser so the executable can be replaced cleanly. The installer copies the binary to a permanent location and preserves settings and the local API key at the same configuration path, so you can delete the downloaded native archive afterward. Keep the unpacked extension folder in place. Your browser launches the native host on demand—do not start it manually as a background service.
 
 To register the host for Microsoft Edge or Chromium, open a terminal in the extracted native package folder and run `./xipu-bridge install --browser edge` or `--browser chromium` (`.\xipu-bridge.exe` on Windows). The launcher scripts (`Install.command`, `Install.cmd`, and `install.sh`) also forward these flags. Pass `--dry-run` to preview the target paths without writing files or Windows registry keys, or `--extension-id YOUR_EXTENSION_ID` if you are loading a custom extension build.
+
+### Linux installation directory
+
+The Linux executable is installed at `~/.local/opt/xipu-ai-bridge/xipu-bridge`. Settings and the local API key are stored separately in `$XDG_CONFIG_HOME/xipu-ai-bridge`, or `~/.config/xipu-ai-bridge` when `XDG_CONFIG_HOME` is unset. On macOS and Windows, the executable and configuration remain together in `XIPU AI Bridge` under the OS user configuration directory.
+
+To choose a different program location on Linux, pass `--prefix` with an absolute, writable parent directory. The installer appends `xipu-ai-bridge` automatically:
+
+```sh
+./xipu-bridge install --prefix "$HOME/Applications"
+./xipu-bridge uninstall --prefix "$HOME/Applications"
+```
+
+This example installs the executable at `~/Applications/xipu-ai-bridge/xipu-bridge`. Use the same `--prefix` when upgrading or uninstalling. The option does not change configuration or browser manifest paths and is available only on Linux.
+
+The installer refuses an existing browser registration that points to a different program path. Unregister it using that installation before changing paths.
+
+When upgrading from the earlier Linux layout, unregister the host using the old executable before installing the new version. Settings and the API key in the old `XIPU AI Bridge` configuration directory are not migrated to `xipu-ai-bridge`; configure the new installation and update clients to use its API key.
 
 ### Linux browser paths
 
@@ -32,7 +49,7 @@ On Linux, the installer targets Chrome by default. Pass `--browser` to register 
 
 - **Brave Stable** uses `$XDG_CONFIG_HOME/BraveSoftware/Brave-Browser/NativeMessagingHosts` (or `~/.config/BraveSoftware/Brave-Browser/NativeMessagingHosts` when `XDG_CONFIG_HOME` is unset), ignoring Chrome-specific environment variables.
 - **Chrome and Chromium** also check `CHROME_CONFIG_HOME` and `CHROME_USER_DATA_DIR` (with `CHROME_USER_DATA_DIR` taking precedence).
-- The bridge's own configuration and API key always live under your OS user configuration directory (`XIPU AI Bridge`).
+- Chrome-specific environment variables do not change the bridge's own program or configuration directories.
 
 If you use a custom browser wrapper, non-stable release channel, or relocated profile directory on Linux or macOS, pass an explicit absolute path with `--native-host-dir`:
 
@@ -72,7 +89,7 @@ From the **Connection** tab, you can also reveal or copy your local API key, or 
 
 Note that turning off **Include reasoning** only hides `reasoning_content` from API responses—it does not stop the model from thinking on the server or reduce credit usage.
 
-Theme preferences are stored in browser extension storage, while host settings and the local API key are saved in your OS user configuration directory under `XIPU AI Bridge`. Upgrades preserve the key and existing settings; `--session-name` and `--port` override only their respective settings.
+Theme preferences are stored in browser extension storage. Host settings and the local API key are saved in your OS user configuration directory under `xipu-ai-bridge` on Linux and `XIPU AI Bridge` on macOS and Windows. Upgrades at the same paths preserve the key and existing settings; `--session-name` and `--port` override only their respective settings.
 
 ### Debugging
 
@@ -314,7 +331,7 @@ To remove the Native Messaging registration for a browser, run:
 ./xipu-bridge uninstall --browser chrome
 ```
 
-(Use `.\xipu-bridge.exe` on Windows, or `./dist/xipu-bridge` if built from source.) Uninstalling removes that browser's manifest and registry entry while leaving your `XIPU AI Bridge` configuration directory and API key intact. You can then remove the extension from `chrome://extensions` and delete the `XIPU AI Bridge` folder from your OS user configuration directory if you no longer need it.
+(Use `.\xipu-bridge.exe` on Windows, or `./dist/xipu-bridge` if built from source.) Repeat any `--prefix` and `--native-host-dir` options used during installation. Uninstalling removes that browser's manifest and registry entry while preserving the executable, configuration, and API key. After unregistering every browser, you can remove the extension from `chrome://extensions` and delete the program and configuration directories if you no longer need them.
 
 | Symptom | What to check |
 | --- | --- |

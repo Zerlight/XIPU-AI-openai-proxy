@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -47,7 +48,15 @@ func ConfigDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "XIPU AI Bridge"), nil
+	return DefaultDir(dir, runtime.GOOS), nil
+}
+
+// DefaultDir resolves the bridge directory within the OS user configuration base.
+func DefaultDir(base, goos string) string {
+	if goos == "linux" {
+		return filepath.Join(base, "xipu-ai-bridge")
+	}
+	return filepath.Join(base, "XIPU AI Bridge")
 }
 
 func decode(data []byte, destination any) error {

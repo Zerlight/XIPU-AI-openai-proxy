@@ -53,6 +53,8 @@ Open the extracted native package folder and run the installer:
 
 The installer registers the native host for your user account—no administrator privileges are required. If no prebuilt release is available yet, you can [build the packages locally](#development).
 
+On Linux, the program is installed under `~/.local/opt/xipu-ai-bridge`. Use `bash install.sh --prefix /absolute/parent` to choose another parent directory; see [installation paths](docs/reference.md#linux-installation-directory) for configuration locations and upgrade options.
+
 ### 2. Load the browser extension
 
 1. Move the extracted extension folder to a permanent location on your computer.

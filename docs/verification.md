@@ -25,7 +25,7 @@ devenv shell -- bash packaging/check.sh
 | Tools & structured output | Prompt-based function call round trips, call-ID matching, JSON Schema argument validation, `json_object` and `json_schema` output validation, complexity bounds, and blocking external schema URLs |
 | Extension UI | Form validation, save failures, offline/busy state locking, API key masking and rotation, theme persistence and rollback, clipboard fallbacks, and accessible combobox keyboard navigation |
 | XIPU AI frontends | Separate `/chat` and `/v3/chat` token stores, model catalog and completion endpoints, 10-attachment (`/chat`) vs. 1-image (`/v3/chat`) limits, non-chat URL rejection, and legacy webpage send flow checks |
-| Installer & packaging | Per-OS Native Messaging manifest paths, Linux Brave and Chromium env-var precedence, custom `--native-host-dir` lifecycle, symlink protection, config/key preservation across upgrades, launcher argument forwarding, archive contents, file permissions, and SHA-256 checksums |
+| Installer & packaging | Per-OS Native Messaging manifest paths, Linux program/config separation and custom `--prefix`, Brave and Chromium env-var precedence, custom `--native-host-dir` lifecycle, symlink protection, config/key preservation across upgrades, launcher argument forwarding, archive contents, file permissions, and SHA-256 checksums |
 
 All automated tests run offline against synthetic credentials, sessions, and mocked responses—no live XIPU AI account is needed.
 
